@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<navigation xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/nav_graph"
+    app:startDestination="@id/welcomeFragment">
+
+    <!-- Global Action to Add Stock -->
+    <action
+        android:id="@+id/action_global_addStockFragment"
+        app:destination="@id/addStockFragment" />
+
+    <fragment
+        android:id="@+id/nav_watchlist"
+        android:name="elad.maayan.themarginhunter.WatchlistFragment"
+        android:label="Watchlist"
+        tools:layout="@layout/fragment_watchlist" >
+        <action
+            android:id="@+id/action_nav_watchlist_to_addStockFragment"
+            app:destination="@id/addStockFragment" />
+    </fragment>
+
+    <fragment
+        android:id="@+id/nav_bargains"
+        android:name="elad.maayan.themarginhunter.BargainsFragment"
+        android:label="Bargain Bin"
+        tools:layout="@layout/fragment_bargains" >
+        <action
+            android:id="@+id/action_nav_bargains_to_addStockFragment"
+            app:destination="@id/addStockFragment" />
+    </fragment>
+
+    <fragment
+        android:id="@+id/welcomeFragment"
+        android:name="elad.maayan.themarginhunter.WelcomeFragment"
+        android:label="WelcomeFragment"
+        tools:layout="@layout/fragment_welcome" >
+        <action
+            android:id="@+id/action_welcomeFragment_to_bargainsFragment"
+            app:destination="@id/nav_bargains" />
+    </fragment>
+
+    <fragment
+        android:id="@+id/addStockFragment"
+        android:name="elad.maayan.themarginhunter.AddStockFragment"
+        android:label="AddStockFragment" />
+
+</navigation>

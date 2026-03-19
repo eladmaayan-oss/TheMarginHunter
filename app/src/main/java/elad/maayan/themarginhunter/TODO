@@ -1,0 +1,15 @@
+ממשק משתמש (UI): עיצוב ה-CardView ב-XML שיציג את הנתונים האלו בצורה ברורה (ירוק למציאה, אדום ליקר).
+
+API Integration: איך למשוך את ה-EPS וה-Dividend לשדות האלו באופן אוטומטי.
+
+ניהול רשימת מעקב: איך לקשר בין ה-Watchlist של המשתמש לנתוני המניות ב-Firestore.
+
+// שימוש בחישוב ה-Yield שהוספנו קודם
+if (stock.getCurrentPrice() < stock.getIntrinsicValue() && stock.getDividendYield() >= 3.0) {
+    bargainStocks.add(stock);
+}
+2. אופטימיזציה למקצוענים: שדה "Underpriced"
+אם בסיס הנתונים שלך יגדל לאלפי מניות, לעבור על כולן באפליקציה יהיה איטי ויבזבז חבילת גלישה. במקרה כזה, כדאי להוסיף שדה בוליאני ב-Firestore שנקרא isBargain.
+
+ברגע שאתה מעדכן את נתוני המניה (למשל פעם ביום דרך סקריפט או Cloud Function), אתה מחשב מראש:
+isBargain = currentPrice < (intrinsicValue * 0.7) (למשל, מניות עם 30% הנחה).

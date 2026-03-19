@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:id="@+id/nav_watchlist"
+        android:icon="@drawable/ic_list"
+        android:title="Watchlist" />
+    <item
+        android:id="@+id/nav_bargains"
+        android:icon="@drawable/ic_trending_down"
+        android:title="Bargain Bin" />
+</menu>

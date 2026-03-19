@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "138718958338",
+    "project_id": "the-margin-hunter",
+    "storage_bucket": "the-margin-hunter.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:138718958338:android:7404c110d81d8de273681b",
+        "android_client_info": {
+          "package_name": "elad.maayan.themarginhunter"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA-l1Hjl_ScwhiLu8uuqoo07ddwAO262ok"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
