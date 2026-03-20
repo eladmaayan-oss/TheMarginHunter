@@ -30,25 +30,31 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-
-    dependencies {
-        implementation(libs.androidx.navigation.fragment)
-        implementation(libs.androidx.navigation.ui)
-        implementation(libs.appcompat)
-        implementation(libs.material)
-        implementation(libs.activity)
-        implementation(libs.constraintlayout)
-        implementation(libs.firebase.firestore)
-        testImplementation(libs.junit)
-        androidTestImplementation(libs.ext.junit)
-        androidTestImplementation(libs.espresso.core)
-    }
+    // מחקנו מכאן את ה-dependencies שהיו בפנים
 }
+
+// זה המקום הנכון והיחיד ל-dependencies
 dependencies {
+    // רשת ו-JSON
+    implementation(libs.retrofit)
+    implementation(libs.converter.gson)
+    implementation(libs.okhttp.logging)
+
+    // Firebase
+    implementation(libs.firebase.firestore)
+
+    // UI ועיצוב
     implementation(libs.appcompat)
     implementation(libs.material)
     implementation(libs.activity)
     implementation(libs.constraintlayout)
-    implementation(libs.androidx.navigation.fragment.ktx)
-    implementation(libs.androidx.navigation.ui.ktx)
+
+    // Navigation (גרסאות Java רגילות)
+    implementation(libs.androidx.navigation.fragment)
+    implementation(libs.androidx.navigation.ui)
+
+    // טסטים
+    testImplementation(libs.junit)
+    androidTestImplementation(libs.ext.junit)
+    androidTestImplementation(libs.espresso.core)
 }

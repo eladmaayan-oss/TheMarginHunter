@@ -75,6 +75,25 @@ public class WatchlistFragment extends Fragment implements StockAdapterListener 
             mParam2 = getArguments().getString(ARG_PARAM2);
         }
     }
+    private void saveStockToFirestore(String ticker, String name, double price, double eps, double mos) {
+        FirebaseFirestore db = FirebaseFirestore.getInstance();
+
+        // יצירת האובייקט לשמירה
+        StockRecord record = new StockRecord(ticker, name, price, eps, mos);
+
+        // שמירה ב-Firestore (כל מניה תקבל מזהה ייחודי משלה)
+        db.collection("stocks")
+                .add(record)
+                .addOnSuccessListener(documentReference -> {
+                    Log.d("FIRESTORE", "Stock saved with ID: " + documentReference.getId());
+                    Toast.makeText(getContext(), "מניה נשמרה בהצלחה!", Toast.LENGTH_SHORT).show();
+                })
+                .addOnFailureListener(e -> {
+                    Log.e("FIRESTORE", "Error saving stock", e);
+                    Toast.makeText(getContext(), "שגיאה בשמירה: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+                });
+    }
+
 
     @Override
     public View onCreateView(LayoutInflater inflater, ViewGroup container,
@@ -97,6 +116,7 @@ public class WatchlistFragment extends Fragment implements StockAdapterListener 
 
             @Override
             public boolean onQueryTextChange(String newText) {
+                Log.d("SEARCH_DEBUG", "Typing: " + newText); // תראה אם זה מדפיס בכל אות ב-Logcat
                 // כאן הקסם קורה!
                 // בכל פעם שהמשתמש מקליד או מוחק אות, האדפטר מעדכן את הרשימה מיד.
                 if (adapter != null) {
@@ -146,6 +166,7 @@ public class WatchlistFragment extends Fragment implements StockAdapterListener 
                     }
                 });
     }
+
     @Override
     public void onDeleteClicked(Stock stock) {
         new AlertDialog.Builder(getContext())

@@ -10,6 +10,36 @@
         android:layout_height="wrap_content"
         android:orientation="vertical">
 
+        <com.google.android.material.textfield.TextInputLayout
+            android:id="@+id/tilCompanyName"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="Company Name"
+            app:startIconDrawable="@android:drawable/ic_menu_info_details">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/etCompanyName"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:enabled="false" />
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <com.google.android.material.textfield.TextInputLayout
+            android:id="@+id/tilPrice"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="Current Price ($)"
+            app:startIconDrawable="@android:drawable/ic_menu_month">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/etPrice"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="numberDecimal"
+                android:focusable="false"
+                android:clickable="false"/>
+        </com.google.android.material.textfield.TextInputLayout>
+
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
@@ -30,7 +60,9 @@
                 android:id="@+id/etTicker"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:inputType="textCapCharacters" />
+                android:inputType="textCapCharacters"
+                android:imeOptions="actionNext"
+                android:nextFocusDown="@id/etEPS" />
         </com.google.android.material.textfield.TextInputLayout>
 
         <com.google.android.material.textfield.TextInputLayout
@@ -44,7 +76,10 @@
                 android:id="@+id/etEPS"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:inputType="numberDecimal|numberSigned" />
+                android:inputType="numberDecimal|numberSigned"
+                android:focusable="false"
+                android:clickable="false"
+                android:cursorVisible="false"/>
         </com.google.android.material.textfield.TextInputLayout>
 
         <com.google.android.material.textfield.TextInputLayout
@@ -58,7 +93,8 @@
                 android:id="@+id/etGrowth"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:inputType="numberDecimal" />
+                android:inputType="numberDecimal"
+                />
         </com.google.android.material.textfield.TextInputLayout>
 
         <Button
