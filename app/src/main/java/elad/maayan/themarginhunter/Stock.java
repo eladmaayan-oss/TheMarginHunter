@@ -1,10 +1,11 @@
 package elad.maayan.themarginhunter;
 
 import com.google.firebase.firestore.DocumentId;
+import com.google.firebase.firestore.Exclude;
 import com.google.firebase.firestore.PropertyName;
 
 public class Stock {
-    @DocumentId
+    @PropertyName("ticker")
     private String ticker;
     
     @PropertyName("companyName")
@@ -36,7 +37,18 @@ public class Stock {
     
     @PropertyName("growthRate")
     private double growthRate;
+    @PropertyName("marginOfSafety")
+    private double marginOfSafety;
 
+    @PropertyName("marginOfSafety")
+    public double getMarginOfSafety() { // שיניתי שם כדי לא להתנגש עם הפונקציה הקיימת שלך
+        return marginOfSafety;
+    }
+
+    @PropertyName("marginOfSafety")
+    public void setMarginOfSafety(double marginOfSafety) {
+        this.marginOfSafety = marginOfSafety;
+    }
     public Stock() {
         // Required for Firestore
     }
@@ -151,8 +163,17 @@ public class Stock {
         this.growthRate = growthRate;
     }
 
-    public double getMarginOfSafety() {
+    @Exclude
+    public double calculateMarginOfSafetyLogic() {
         if (intrinsicValue <= 0 || currentPrice <= 0) return 0;
         return ((intrinsicValue - currentPrice) / intrinsicValue) * 100;
+    }
+
+    public String getName() {
+        return companyName;
+    }
+
+    public double getPrice() {
+        return currentPrice;
     }
 }

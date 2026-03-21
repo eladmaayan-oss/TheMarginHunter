@@ -70,10 +70,15 @@ public class StockAdapter extends RecyclerView.Adapter<StockAdapter.StockViewHol
         Stock stock = stockList.get(position);
 
         holder.tvTicker.setText(stock.getTicker());
-        holder.tvPrice.setText(String.format("$%.2f", stock.getCurrentPrice()));
-        holder.tvIntrinsicValue.setText(String.format("$%.2f", stock.getIntrinsicValue()));
+        double currentPrice = stock.getCurrentPrice();
+        holder.tvPrice.setText("מחיר שוק: " + String.format("$%.2f", currentPrice));
+
+        double intrinsicValue = stock.getIntrinsicValue();
+        holder.tvIntrinsicValue.setText("ערך פנימי: $" + String.format("%.2f", intrinsicValue));
+        double mos = stock.getMarginOfSafety();
+        holder.tvMOS.setText("מרווח ביטחון: " + String.format("%.1f%%", stock.getMarginOfSafety()));
         holder.tvDividend.setText(String.format("Div Yield: %.1f%%", stock.getDividendYield()));
-        
+
         holder.btnDelete.setOnClickListener(v -> {
             if (listener != null) {
                 listener.onDeleteClicked(stock);
@@ -91,25 +96,24 @@ public class StockAdapter extends RecyclerView.Adapter<StockAdapter.StockViewHol
         });
 
         // חישוב ועיצוב ה-Margin of Safety
-        double mos = stock.getMarginOfSafety();
-        holder.tvMoS.setText(String.format("Margin: %.1f%%", mos));
-
-        if (stock.getEps() == 0 && stock.getIntrinsicValue() == 0) {
-            holder.tvIntrinsicValue.setText("Loading...");
+        double iv = stock.getIntrinsicValue();
+        if (stock.getEps() == 0 && iv == 0) {
+            holder.tvIntrinsicValue.setText("ערך פנימי: טוען...");
         } else {
-            holder.tvIntrinsicValue.setText(String.format("$%.2f", stock.getIntrinsicValue()));
+            holder.tvIntrinsicValue.setText("ערך פנימי: " + String.format("$%.2f", iv));
         }
-
+        holder.tvMOS.setText("מרווח ביטחון: " + String.format("%.1f%%", mos));
+        holder.tvDividend.setText(String.format("תשואת דיבידנד: %.2f%%", stock.getDividendYield() * 100));
         // לוגיקת צבעים לפי רמת ה"ערך"
         if (mos >= 30) {
             // "מציאה" עמוקה - ירוק כהה
-            holder.tvMoS.setBackgroundColor(Color.parseColor("#2E7D32"));
+            holder.tvMOS.setBackgroundColor(Color.parseColor("#2E7D32"));
         } else if (mos > 0) {
             // מתחת לערך - ירוק בהיר
-            holder.tvMoS.setBackgroundColor(Color.parseColor("#81C784"));
+            holder.tvMOS.setBackgroundColor(Color.parseColor("#81C784"));
         } else {
             // יקר מדי - אדום
-            holder.tvMoS.setBackgroundColor(Color.parseColor("#E57373"));
+            holder.tvMOS.setBackgroundColor(Color.parseColor("#E57373"));
         }
     }
 
@@ -120,7 +124,7 @@ public class StockAdapter extends RecyclerView.Adapter<StockAdapter.StockViewHol
 
     // ViewHolder שמחזיק את הרכיבים של ה-CardView
     public static class StockViewHolder extends RecyclerView.ViewHolder {
-        TextView tvTicker, tvPrice, tvIntrinsicValue, tvMoS, tvDividend;
+        TextView tvTicker, tvPrice, tvIntrinsicValue, tvMOS, tvDividend;
         ImageButton btnDelete, btnEdit;
 
         public StockViewHolder(@NonNull View itemView) {
@@ -129,7 +133,7 @@ public class StockAdapter extends RecyclerView.Adapter<StockAdapter.StockViewHol
             tvTicker = itemView.findViewById(R.id.tvTicker);
             tvPrice = itemView.findViewById(R.id.tvPrice);
             tvIntrinsicValue = itemView.findViewById(R.id.tvIntrinsicValue);
-            tvMoS = itemView.findViewById(R.id.tvMoS);
+            tvMOS = itemView.findViewById(R.id.tvMoS);
             tvDividend = itemView.findViewById(R.id.tvDividend);
             btnDelete = itemView.findViewById(R.id.btnDeleteStock);
             btnEdit = itemView.findViewById(R.id.btnEditStock);

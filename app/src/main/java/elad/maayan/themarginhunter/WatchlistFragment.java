@@ -17,6 +17,7 @@ import android.widget.Toast;
 
 import com.google.android.material.floatingactionbutton.FloatingActionButton;
 import com.google.firebase.firestore.FirebaseFirestore;
+import com.google.firebase.firestore.Query;
 import com.google.firebase.firestore.QueryDocumentSnapshot;
 
 import java.util.ArrayList;
@@ -67,6 +68,7 @@ public class WatchlistFragment extends Fragment implements StockAdapterListener 
         return fragment;
     }
 
+
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -96,50 +98,38 @@ public class WatchlistFragment extends Fragment implements StockAdapterListener 
 
 
     @Override
-    public View onCreateView(LayoutInflater inflater, ViewGroup container,
-                             Bundle savedInstanceState) {
+    public View onCreateView(LayoutInflater inflater, ViewGroup container, Bundle savedInstanceState) {
         View view = inflater.inflate(R.layout.fragment_watchlist, container, false);
-        adapter = new StockAdapter(stockList, this);
-        view.findViewById(R.id.fabAddStock).setOnClickListener(v -> {
-            Navigation.findNavController(v).navigate(R.id.action_global_addStockFragment);
-        });
 
-        // בתוך WatchlistFragment.java או BargainsFragment.java
-
-        SearchView searchView = view.findViewById(R.id.searchView);
-        searchView.setSubmitButtonEnabled(false); // מבטל את הצורך בכפתור "שלח"
-        searchView.setOnQueryTextListener(new SearchView.OnQueryTextListener() {
-            @Override
-            public boolean onQueryTextSubmit(String query) {
-                return false; // לא צריך ללחוץ Enter
-            }
-
-            @Override
-            public boolean onQueryTextChange(String newText) {
-                Log.d("SEARCH_DEBUG", "Typing: " + newText); // תראה אם זה מדפיס בכל אות ב-Logcat
-                // כאן הקסם קורה!
-                // בכל פעם שהמשתמש מקליד או מוחק אות, האדפטר מעדכן את הרשימה מיד.
-                if (adapter != null) {
-                    adapter.filter(newText);
-                }
-                return true; // מחזירים true כדי לציין שטיפלנו באירוע
-            }
-        });
-
+        // אתחול רשימה ואדפטר
         rvWatchlist = view.findViewById(R.id.rvWatchlist);
-        FloatingActionButton fabAddStock = view.findViewById(R.id.fabAddStock);
-
+        adapter = new StockAdapter(stockList, this);
         rvWatchlist.setLayoutManager(new LinearLayoutManager(getContext()));
         rvWatchlist.setAdapter(adapter);
 
-        fetchAllStocks(); // קריאה לנתונים
+        // פתיחת הדיאלוג - הדרך הנכונה
+        view.findViewById(R.id.fabAddStock).setOnClickListener(v -> {
+            AddStockFragment addStockDialog = new AddStockFragment();
+            addStockDialog.show(getChildFragmentManager(), "AddStockTag");
+        });
 
-        // Inflate the layout for this fragment
+        // חיפוש
+        SearchView searchView = view.findViewById(R.id.searchView);
+        searchView.setOnQueryTextListener(new SearchView.OnQueryTextListener() {
+            @Override public boolean onQueryTextSubmit(String query) { return false; }
+            @Override
+            public boolean onQueryTextChange(String newText) {
+                if (adapter != null) adapter.filter(newText);
+                return true;
+            }
+        });
+
+        fetchAllStocks(); // מאזין לשינויים ב-Firestore
         return view;
     }
-
     private void fetchAllStocks() {
         db.collection("stocks")
+                //   .orderBy("marginOfSafety", Query.Direction.DESCENDING)
                 .addSnapshotListener((value, error) -> {
                     if (error != null) {
                         Log.e("WATCHLIST", "Listen failed.", error);
