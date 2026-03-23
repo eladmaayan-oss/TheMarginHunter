@@ -1,212 +1,282 @@
 package elad.maayan.themarginhunter;
 
+import android.graphics.Color;
 import android.os.Bundle;
-
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
-import androidx.fragment.app.Fragment;
-import androidx.navigation.Navigation;
-
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
+import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+import androidx.navigation.Navigation;
+
+import com.github.mikephil.charting.charts.LineChart;
+import com.github.mikephil.charting.data.Entry;
+import com.github.mikephil.charting.data.LineData;
+import com.github.mikephil.charting.data.LineDataSet;
+import com.google.android.material.bottomsheet.BottomSheetBehavior;
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment;
 import com.google.android.material.textfield.TextInputEditText;
 import com.google.android.material.textfield.TextInputLayout;
 import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.SetOptions;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import retrofit2.Callback;
 import retrofit2.Call;
+import retrofit2.Callback;
 import retrofit2.Response;
 
 public class AddStockFragment extends BottomSheetDialogFragment {
 
     private TextInputEditText etTicker, etEPS, etGrowth, etPrice, etCompanyName;
     private TextInputLayout tilTicker, tilEPS, tilGrowth;
-    private FirebaseFirestore db = FirebaseFirestore.getInstance();
-    private Button btnSave;
+    private Button btnSave, btnFetch;
+    private LineChart lineChart;
+    private TextView tvIntrinsicValueResult;
+
+    private final FirebaseFirestore db = FirebaseFirestore.getInstance();
     private final String API_KEY = "3PY2WSBJ2P1ZUR0K";
-    String divYieldStr;
-    double divYield = 0.0;
+    private String divYieldStr;
+    private Map<String, AlphaVantageResponse.DailyData> currentChartData;
 
     @Nullable
     @Override
     public View onCreateView(@NonNull LayoutInflater inflater, @Nullable ViewGroup container, @Nullable Bundle savedInstanceState) {
         View view = inflater.inflate(R.layout.fragment_add_stock, container, false);
+        initViews(view);
+        setupListeners();
+        handleArguments(view);
+        return view;
+    }
 
-        // אתחול ה-Views
+    private void initViews(View view) {
         etTicker = view.findViewById(R.id.etTicker);
         etEPS = view.findViewById(R.id.etEPS);
         etGrowth = view.findViewById(R.id.etGrowth);
         etPrice = view.findViewById(R.id.etPrice);
         etCompanyName = view.findViewById(R.id.etCompanyName);
-        btnSave = view.findViewById(R.id.btnSaveStock);
         tilTicker = view.findViewById(R.id.tilTicker);
         tilEPS = view.findViewById(R.id.tilEPS);
         tilGrowth = view.findViewById(R.id.tilGrowth);
-
-        // מאזין ליציאה משדה הטיקר כדי למשוך נתונים
-        etTicker.setOnFocusChangeListener((v, hasFocus) -> {
-            if (!hasFocus) {
-                String ticker = etTicker.getText().toString().toUpperCase().trim();
-                if (!ticker.isEmpty()) fetchStockData(ticker);
-            }
-        });
-
-        btnSave.setOnClickListener(v -> validateAndSave());
-
-        // בדיקה אם אנחנו במצב עריכה
-        if (getArguments() != null && getArguments().getString("ticker") != null) {
-            setupEditMode(getArguments().getString("ticker"));
-        }
-
-        return view;
+        btnSave = view.findViewById(R.id.btnSaveStock);
+        btnFetch = view.findViewById(R.id.btnFetch);
+        lineChart = view.findViewById(R.id.lineChart);
+        tvIntrinsicValueResult = view.findViewById(R.id.tvIntrinsicValueResult);
     }
 
-    // --- הפונקציות שהיו חסרות לך ---
+    private void setupListeners() {
+        // חישוב בזמן אמת
+        etGrowth.addTextChangedListener(new android.text.TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+            @Override public void onTextChanged(CharSequence s, int start, int before, int count) { updateIntrinsicValueRealTime(); }
+            @Override public void afterTextChanged(android.text.Editable s) {}
+        });
+
+        // כפתור Fetch משולב (Firebase -> API)
+        btnFetch.setOnClickListener(v -> performSmartFetch());
+
+        // כפתור שמירה
+        btnSave.setOnClickListener(v -> validateAndSave());
+    }
+
+    private void handleArguments(View view) {
+        if (getArguments() != null) {
+            String tickerArg = getArguments().getString("ticker");
+            if (tickerArg != null) {
+                etTicker.setText(tickerArg);
+                // אם אנחנו במצב "עדכון", נטען מ-Firebase, אחרת נלחץ אוטומטית על Fetch
+                if (btnSave.getText().toString().equals("Update Stock")) {
+                    setupEditMode(tickerArg);
+                } else {
+                    view.post(() -> btnFetch.performClick());
+                }
+            }
+        }
+    }
+
+    private void performSmartFetch() {
+        String ticker = etTicker.getText().toString().trim().toUpperCase();
+        if (ticker.isEmpty()) {
+            etTicker.setError("נא להזין טיקר");
+            return;
+        }
+
+        lineChart.setVisibility(View.VISIBLE);
+        db.collection("stocks").document(ticker).get().addOnSuccessListener(doc -> {
+            if (doc.exists()) {
+                Stock stock = doc.toObject(Stock.class);
+                if (stock != null) {
+                    fillFieldsFromFirebase(stock);
+                    Map<String, Object> rawChart = (Map<String, Object>) doc.get("chartData");
+                    if (rawChart != null) {
+                        currentChartData = convertToDailyData(rawChart);
+                        setupChart(lineChart, currentChartData);
+                        Toast.makeText(getContext(), "נטען מהמאגר המקומי", Toast.LENGTH_SHORT).show();
+                    } else {
+                        fetchChartData(ticker, lineChart);
+                    }
+                }
+            } else {
+                fetchStockData(ticker);
+                fetchChartData(ticker, lineChart);
+            }
+        }).addOnFailureListener(e -> {
+            fetchStockData(ticker);
+            fetchChartData(ticker, lineChart);
+        });
+    }
 
     private void fetchStockData(String ticker) {
         StockApiService api = RetrofitClient.getApiService();
-
-        // 1. קריאה ראשונה: OVERVIEW
         api.getCompanyOverview("OVERVIEW", ticker, API_KEY).enqueue(new Callback<CompanyOverviewResponse>() {
             @Override
             public void onResponse(Call<CompanyOverviewResponse> call, Response<CompanyOverviewResponse> response) {
-                if (response.isSuccessful() && response.body() != null) {
-                    // אם קיבלנו את הודעת ה-Limit (הגוף לא מכיל EPS)
+                if (response.isSuccessful() && response.body() != null && response.body().getEps() != null) {
+                    String eps = response.body().getEps();
+                    String name = response.body().getName();
                     divYieldStr = response.body().getDividendYield();
-                    if (response.body().getEps() == null) {
-                        Log.e("API_LIMIT", "Hit API limit on Overview");
-                        return;
-                    }
+                    String growthHint = response.body().getQuarterlyGrowth();
 
-                    String epsStr = response.body().getEps();
-                    String companyName = response.body().getName();
-
-                    // מחכים שנייה אחת לפני הקריאה הבאה כדי לא להיחסם
                     new android.os.Handler().postDelayed(() -> {
-
-                        // 2. קריאה שנייה: GLOBAL_QUOTE
                         api.getStockQuote("GLOBAL_QUOTE", ticker, API_KEY).enqueue(new Callback<AlphaVantageResponse>() {
                             @Override
-                            public void onResponse(Call<AlphaVantageResponse> call, Response<AlphaVantageResponse> priceResponse) {
-                                if (priceResponse.isSuccessful() && priceResponse.body() != null) {
-                                    AlphaVantageResponse.StockQuote quote = priceResponse.body().getQuote();
-
-                                    if (quote != null && quote.getPrice() != null) {
-                                        getActivity().runOnUiThread(() -> {
-                                            etCompanyName.setText(companyName);
-                                            etPrice.setText(quote.getPrice());
-                                            etEPS.setText(epsStr);
-                                            String growthHint = response.body().getQuarterlyGrowth();
-                                            if (growthHint != null && !growthHint.equals("0")) {
-                                                // הופכים את הנתון לאחוז (למשל 0.15 הופך ל-15%)
-                                                double hintVal = Double.parseDouble(growthHint) * 100;
-                                                etGrowth.setHint("רמז (YOY): " + String.format("%.1f%%", hintVal));
-                                            }
-                                            Log.d("API_SUCCESS", "Fields updated!");
-                                        });
-                                    } else {
-                                        Log.e("API_LIMIT", "Hit API limit on Quote");
-                                    }
+                            public void onResponse(Call<AlphaVantageResponse> call, Response<AlphaVantageResponse> pr) {
+                                if (pr.isSuccessful() && pr.body() != null && pr.body().getQuote() != null) {
+                                    getActivity().runOnUiThread(() -> {
+                                        etCompanyName.setText(name);
+                                        etEPS.setText(eps);
+                                        etPrice.setText(pr.body().getQuote().getPrice());
+                                        if (growthHint != null && !growthHint.equals("0")) {
+                                            double hVal = Double.parseDouble(growthHint) * 100;
+                                            tilGrowth.setHelperText("Consensus: " + String.format("%.1f%%", hVal));
+                                        }
+                                        updateIntrinsicValueRealTime();
+                                    });
                                 }
                             }
                             @Override public void onFailure(Call<AlphaVantageResponse> call, Throwable t) {}
                         });
-                    }, 1500); // השהיה של 1.5 שניות
+                    }, 1500);
+                } else {
+                    getActivity().runOnUiThread(() -> Toast.makeText(getContext(), "API Limit Reached", Toast.LENGTH_SHORT).show());
                 }
             }
             @Override public void onFailure(Call<CompanyOverviewResponse> call, Throwable t) {}
         });
-
-    }
-    private void setupEditMode(String ticker) {
-        etTicker.setText(ticker);
-        etTicker.setEnabled(false); // אי אפשר לשנות טיקר קיים
-        btnSave.setText("Update Stock");
-
-        db.collection("stocks").document(ticker).get()
-                .addOnSuccessListener(documentSnapshot -> {
-                    if (documentSnapshot.exists()) {
-                        Stock stock = documentSnapshot.toObject(Stock.class);
-                        if (stock != null) {
-                            etEPS.setText(String.valueOf(stock.getEps()));
-                            etGrowth.setText(String.valueOf(stock.getGrowthRate()));
-                            etCompanyName.setText(stock.getName());
-                            etPrice.setText(String.valueOf(stock.getPrice()));
-                        }
-                    }
-                });
     }
 
-    private double calculateMarginOfSafety(double currentPrice, double eps, double growthRate) {
-        // נוסחת גרהאם: (8.5 + 2 * growthRate) * EPS
-        double intrinsicValue = eps * (8.5 + 2 * growthRate);
+    private void fetchChartData(String ticker, LineChart chart) {
+        RetrofitClient.getApiService().getDailySeries("TIME_SERIES_DAILY", ticker, API_KEY).enqueue(new Callback<AlphaVantageResponse>() {
+            @Override
+            public void onResponse(Call<AlphaVantageResponse> call, Response<AlphaVantageResponse> response) {
+                if (response.isSuccessful() && response.body() != null) {
+                    currentChartData = response.body().getTimeSeries();
+                    if (currentChartData != null) setupChart(chart, currentChartData);
+                }
+            }
+            @Override public void onFailure(Call<AlphaVantageResponse> call, Throwable t) {}
+        });
+    }
 
-        if (intrinsicValue <= 0) return 0;
-        return ((intrinsicValue - currentPrice) / intrinsicValue) * 100;
+    private void setupChart(LineChart chart, Map<String, AlphaVantageResponse.DailyData> history) {
+        List<Entry> entries = new ArrayList<>();
+        List<String> dates = new ArrayList<>(history.keySet());
+        Collections.sort(dates);
+        int index = 0;
+        for (String date : dates) {
+            entries.add(new Entry(index++, Float.parseFloat(history.get(date).getClose())));
+        }
+        LineDataSet ds = new LineDataSet(entries, "Price");
+        ds.setColor(Color.BLUE);
+        ds.setDrawCircles(false);
+        chart.setData(new LineData(ds));
+        chart.getAxisRight().setEnabled(false);
+        chart.getXAxis().setDrawLabels(false);
+        chart.animateX(1000);
+        chart.invalidate();
+    }
+
+    private void updateIntrinsicValueRealTime() {
+        try {
+            String epsS = etEPS.getText().toString();
+            String priS = etPrice.getText().toString();
+            String groS = etGrowth.getText().toString();
+            if (!epsS.isEmpty() && !priS.isEmpty()) {
+                double eps = Double.parseDouble(epsS), pri = Double.parseDouble(priS), gro = groS.isEmpty() ? 0 : Double.parseDouble(groS);
+                double iv = eps * (8.5 + 2 * gro);
+                tvIntrinsicValueResult.setText(String.format("Intrinsic Value: $%.2f", iv));
+                tvIntrinsicValueResult.setTextColor(iv > pri ? Color.parseColor("#2E7D32") : Color.RED);
+            }
+        } catch (Exception ignored) {}
     }
 
     private void validateAndSave() {
         String ticker = etTicker.getText().toString().trim().toUpperCase();
-        String epsStr = etEPS.getText().toString().trim();
-        String priceStr = etPrice.getText().toString().trim();
-        String growthStr = etGrowth.getText().toString().trim();
+        if (ticker.isEmpty() || etEPS.getText().toString().isEmpty()) return;
 
-        if (ticker.isEmpty() || epsStr.isEmpty() || priceStr.isEmpty()) {
-            Toast.makeText(getContext(), "Please fill all fields", Toast.LENGTH_SHORT).show();
-            return;
-        }
-        try {
-            if (divYieldStr != null && !divYieldStr.isEmpty() && !divYieldStr.equalsIgnoreCase("None")) {
-                divYield = Double.parseDouble(divYieldStr);
-            } else {
-                divYield = 0.0; // אם זה None או ריק, זה פשוט אפס
-            }
-        } catch (NumberFormatException e) {
-            divYield = 0.0;
-            Log.e("CONVERSION_ERROR", "Could not parse dividend");
-        }
+        double price = Double.parseDouble(etPrice.getText().toString());
+        double eps = Double.parseDouble(etEPS.getText().toString());
+        double growth = etGrowth.getText().toString().isEmpty() ? 0 : Double.parseDouble(etGrowth.getText().toString());
+        double iv = eps * (8.5 + 2 * growth);
+        double mos = ((iv - price) / iv) * 100;
 
-        double price = Double.parseDouble(priceStr);
-        double eps = Double.parseDouble(epsStr);
-        double growth = growthStr.isEmpty() ? 0 : Double.parseDouble(growthStr);
-        double mos = calculateMarginOfSafety(price, eps, growth);
+        Map<String, Object> data = new HashMap<>();
+        data.put("ticker", ticker);
+        data.put("companyName", etCompanyName.getText().toString());
+        data.put("currentPrice", price);
+        data.put("eps", eps);
+        data.put("growthRate", growth);
+        data.put("marginOfSafety", mos);
+        data.put("intrinsicValue", iv);
+        data.put("chartData", currentChartData);
+        data.put("lastUpdated", System.currentTimeMillis());
 
-        saveToFirestore(ticker, etCompanyName.getText().toString(), price, eps, growth, mos);
+        db.collection("stocks").document(ticker).set(data, SetOptions.merge()).addOnSuccessListener(aVoid -> {
+            if (isAdded()) Navigation.findNavController(requireActivity(), R.id.nav_host_fragment).popBackStack();
+        });
     }
 
-    private void saveToFirestore(String ticker, String companyName, double currentPrice, double eps, double growth, double mos) {
-        Map<String, Object> stockData = new HashMap<>();
-        stockData.put("ticker", ticker);
-        stockData.put("companyName", companyName);
-        stockData.put("currentPrice", currentPrice);
-        stockData.put("eps", eps);
-        stockData.put("growthRate", growth);
-        stockData.put("marginOfSafety", mos);
-        stockData.put("dividendYield", divYield);
-        stockData.put("lastUpdated", System.currentTimeMillis());
-// חישוב הערך הפנימי (Intrinsic Value) כי ה-Stock.java מצפה לו
-        double intrinsicValue = eps * (8.5 + 2 * growth);
-        stockData.put("intrinsicValue", intrinsicValue);
+    private void fillFieldsFromFirebase(Stock stock) {
+        etCompanyName.setText(stock.getName());
+        etPrice.setText(String.valueOf(stock.getPrice()));
+        etEPS.setText(String.valueOf(stock.getEps()));
+        etGrowth.setText(String.valueOf(stock.getGrowthRate()));
+        updateIntrinsicValueRealTime();
+    }
 
-        db.collection("stocks").document(ticker)
-                .set(stockData, SetOptions.merge())
-                .addOnSuccessListener(aVoid -> {
-                    if (isAdded()) {
-                        Toast.makeText(getContext(), "Success!", Toast.LENGTH_SHORT).show();
-                        Navigation.findNavController(requireActivity(), R.id.nav_host_fragment)
-                                .popBackStack();                    }
-                })
-                .addOnFailureListener(e -> Toast.makeText(getContext(), "Error saving", Toast.LENGTH_SHORT).show());
+    private Map<String, AlphaVantageResponse.DailyData> convertToDailyData(Map<String, Object> raw) {
+        Map<String, AlphaVantageResponse.DailyData> history = new HashMap<>();
+        for (Map.Entry<String, Object> entry : raw.entrySet()) {
+            Map<String, Object> vals = (Map<String, Object>) entry.getValue();
+            AlphaVantageResponse.DailyData daily = new AlphaVantageResponse.DailyData();
+            Object close = vals.get("close") != null ? vals.get("close") : vals.get("4. close");
+            daily.setClose(String.valueOf(close));
+            history.put(entry.getKey(), daily);
+        }
+        return history;
+    }
+
+    private void setupEditMode(String ticker) {
+        etTicker.setEnabled(false);
+        btnSave.setText("Update Stock");
+        db.collection("stocks").document(ticker).get().addOnSuccessListener(doc -> {
+            if (doc.exists()) fillFieldsFromFirebase(doc.toObject(Stock.class));
+        });
+    }
+
+    @Override
+    public void onStart() {
+        super.onStart();
+        View v = getView();
+        if (v != null) BottomSheetBehavior.from((View) v.getParent()).setState(BottomSheetBehavior.STATE_EXPANDED);
     }
 }

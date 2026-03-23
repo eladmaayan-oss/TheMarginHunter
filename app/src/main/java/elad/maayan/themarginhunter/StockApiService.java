@@ -20,4 +20,10 @@ public interface StockApiService {
             @Query("symbol") String ticker,
             @Query("apikey") String apiKey
     );
+    @GET("query")
+    Call<AlphaVantageResponse> getDailySeries(
+            @Query("function") String function, // כאן תשלח "TIME_SERIES_DAILY"
+            @Query("symbol") String symbol,
+            @Query("apikey") String apiKey
+    );
 }

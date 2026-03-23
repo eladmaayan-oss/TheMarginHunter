@@ -117,6 +117,9 @@ public class StockAdapter extends RecyclerView.Adapter<StockAdapter.StockViewHol
         }
     }
 
+    public List<Stock> getStocks() {
+        return stockList;
+    }
     @Override
     public int getItemCount() {
         return stockList != null ? stockList.size() : 0;    }

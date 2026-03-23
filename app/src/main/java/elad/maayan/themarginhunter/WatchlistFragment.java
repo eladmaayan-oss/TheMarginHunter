@@ -13,6 +13,10 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import androidx.appcompat.widget.SearchView;
+
+import android.widget.Button;
+import android.widget.ImageButton;
+import android.widget.ProgressBar;
 import android.widget.Toast;
 
 import com.google.android.material.floatingactionbutton.FloatingActionButton;
@@ -21,7 +25,13 @@ import com.google.firebase.firestore.Query;
 import com.google.firebase.firestore.QueryDocumentSnapshot;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+
+import retrofit2.Call;
+import retrofit2.Callback;
+import retrofit2.Response;
 
 /**
  * A simple {@link Fragment} subclass.
@@ -34,6 +44,9 @@ public class WatchlistFragment extends Fragment implements StockAdapterListener 
     private List<Stock> stockList = new ArrayList<>();
     private StockAdapter adapter;
     private RecyclerView rvWatchlist;
+    private ProgressBar pbRefresh;
+    private ImageButton btnRefreshAll;
+    private boolean isRefreshing = false; // משתנה מחלקה למניעת כפילויות
 
 
 
@@ -106,7 +119,14 @@ public class WatchlistFragment extends Fragment implements StockAdapterListener 
         adapter = new StockAdapter(stockList, this);
         rvWatchlist.setLayoutManager(new LinearLayoutManager(getContext()));
         rvWatchlist.setAdapter(adapter);
+        pbRefresh = view.findViewById(R.id.pbRefresh);
+        btnRefreshAll = view.findViewById(R.id.btnRefreshAll);
 
+
+        btnRefreshAll.setOnClickListener(v -> {
+            Log.d("REFRESH", "Refresh button clicked");
+            refreshAllStocks();
+        });
         // פתיחת הדיאלוג - הדרך הנכונה
         view.findViewById(R.id.fabAddStock).setOnClickListener(v -> {
             AddStockFragment addStockDialog = new AddStockFragment();
@@ -155,6 +175,74 @@ public class WatchlistFragment extends Fragment implements StockAdapterListener 
                         adapter.updateData(tempSearchList);
                     }
                 });
+    }
+    private void refreshAllStocks() {
+        if (isRefreshing) {
+            Log.d("REFRESH", "Already refreshing, ignoring click.");
+            return;
+        }
+
+
+        List<Stock> currentStocks = adapter.getStocks();
+        if (currentStocks == null || currentStocks.isEmpty()) return;
+        Log.d("REFRESH","starting refresh");
+
+        isRefreshing = true; // נועל את הכפתור
+        // הצגת ה-Progress Bar
+        pbRefresh.setVisibility(View.VISIBLE);
+        Toast.makeText(getContext(), "מעדכן מחירים (2 שניות למניה)...", Toast.LENGTH_SHORT).show();
+
+        for (int i = 0; i < currentStocks.size(); i++) {
+            final int index = i; // עבור ה-Handler
+            Stock stock = currentStocks.get(index);
+
+            int finalI = i;
+            new android.os.Handler().postDelayed(() -> {
+                updateSingleStockPrice(stock);
+                Log.d("REGRESH","refreshing stock"+finalI);
+                // אם הגענו למניה האחרונה ברשימה - נסתיר את ה-Progress
+                if (index == currentStocks.size() - 1) {
+                    isRefreshing = false; // משחרר את הנעילה
+                    pbRefresh.setVisibility(View.GONE);
+                    Toast.makeText(getContext(), "העדכון הסתיים!", Toast.LENGTH_SHORT).show();
+                }
+            }, i * 2000L); // השהיה מצטברת
+        }
+    }
+
+    private void updateSingleStockPrice(Stock stock) {
+        StockApiService api = RetrofitClient.getApiService();
+        String API_KEY = "3PY2WSBJ2P1ZUR0K";
+
+        api.getStockQuote("GLOBAL_QUOTE", stock.getTicker(), API_KEY).enqueue(new Callback<AlphaVantageResponse>() {
+            @Override
+            public void onResponse(Call<AlphaVantageResponse> call, Response<AlphaVantageResponse> response) {
+                if (response.isSuccessful() && response.body() != null) {
+                    AlphaVantageResponse.StockQuote quote = response.body().getQuote();
+                    if (quote != null && quote.getPrice() != null) {
+                        double newPrice = Double.parseDouble(quote.getPrice());
+
+                        // חישוב מחדש של ה-Margin of Safety עם המחיר החדש
+                        double newMos = ((stock.getIntrinsicValue() - newPrice) / stock.getIntrinsicValue()) * 100;
+
+                        // עדכון ב-Firestore
+                        Map<String, Object> updates = new HashMap<>();
+                        updates.put("currentPrice", newPrice);
+                        updates.put("marginOfSafety", newMos);
+                        updates.put("lastUpdated", System.currentTimeMillis());
+
+                        db.collection("stocks").document(stock.getTicker())
+                                .update(updates)
+                                .addOnSuccessListener(aVoid -> Log.d("REFRESH", "Updated: " + stock.getTicker()));
+                    }
+                }
+            }
+
+            @Override
+            public void onFailure(Call<AlphaVantageResponse> call, Throwable t) {
+                Log.e("REFRESH", "Failed updating " + stock.getTicker());
+            }
+        });
     }
 
     @Override

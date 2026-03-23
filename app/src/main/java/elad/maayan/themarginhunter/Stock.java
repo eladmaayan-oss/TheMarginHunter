@@ -4,10 +4,12 @@ import com.google.firebase.firestore.DocumentId;
 import com.google.firebase.firestore.Exclude;
 import com.google.firebase.firestore.PropertyName;
 
+import java.util.List;
+
 public class Stock {
     @PropertyName("ticker")
     private String ticker;
-    
+
     @PropertyName("companyName")
     private String companyName;
     
