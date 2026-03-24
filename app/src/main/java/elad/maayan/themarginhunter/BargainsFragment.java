@@ -20,6 +20,7 @@ import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.QueryDocumentSnapshot;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -145,6 +146,10 @@ public class BargainsFragment extends Fragment implements StockAdapterListener {
                                     bargainStocksList.add(stock);
                                 }
                             }
+
+                            Collections.sort(bargainStocksList, (s1, s2) ->
+                                    Double.compare(s2.getMarginOfSafety(), s1.getMarginOfSafety())
+                            );
                             // עדכון ה-UI (המתודה שלך)
                             updateUI();
                         }

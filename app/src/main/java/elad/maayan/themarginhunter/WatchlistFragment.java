@@ -212,7 +212,7 @@ public class WatchlistFragment extends Fragment implements StockAdapterListener 
 
     private void updateSingleStockPrice(Stock stock) {
         StockApiService api = RetrofitClient.getApiService();
-        String API_KEY = "3PY2WSBJ2P1ZUR0K";
+        String API_KEY = "BH00QGEFNFNZ1IDN";
 
         api.getStockQuote("GLOBAL_QUOTE", stock.getTicker(), API_KEY).enqueue(new Callback<AlphaVantageResponse>() {
             @Override

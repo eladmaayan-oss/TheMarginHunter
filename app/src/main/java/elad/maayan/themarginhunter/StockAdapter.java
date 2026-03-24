@@ -69,54 +69,53 @@ public class StockAdapter extends RecyclerView.Adapter<StockAdapter.StockViewHol
     public void onBindViewHolder(@NonNull StockAdapter.StockViewHolder holder, int position) {
         Stock stock = stockList.get(position);
 
+        // 1. נתונים בסיסיים
         holder.tvTicker.setText(stock.getTicker());
-        double currentPrice = stock.getCurrentPrice();
-        holder.tvPrice.setText("מחיר שוק: " + String.format("$%.2f", currentPrice));
+        holder.tvPrice.setText(String.format("מחיר שוק: $%.2f", stock.getCurrentPrice()));
 
-        double intrinsicValue = stock.getIntrinsicValue();
-        holder.tvIntrinsicValue.setText("ערך פנימי: $" + String.format("%.2f", intrinsicValue));
+        // 2. טיפול בערך פנימי (בדיקה אם הנתון קיים)
+        double iv = stock.getIntrinsicValue();
+        if (iv <= 0) {
+            holder.tvIntrinsicValue.setText("ערך פנימי: בחישוב...");
+        } else {
+            holder.tvIntrinsicValue.setText(String.format("ערך פנימי: $%.2f", iv));
+        }
+
+        // 3. טיפול בדיבידנד (מוודא שלא מוכפל ב-100 פעמיים)
+        double div = stock.getDividendYield();
+        // אם הערך ב-DB הוא למשל 0.02 (עבור 2%), נכפיל ב-100 לתצוגה
+        holder.tvDividend.setText(String.format("דיבידנד: %.1f%%", div * 100));
+
+        // 4. לוגיקת צבעים ואמוג'ים לפי ה-MOS (מרווח ביטחון)
         double mos = stock.getMarginOfSafety();
-        holder.tvMOS.setText("מרווח ביטחון: " + String.format("%.1f%%", stock.getMarginOfSafety()));
-        holder.tvDividend.setText(String.format("Div Yield: %.1f%%", stock.getDividendYield()));
+        holder.tvMOS.setText(String.format("מרווח ביטחון: %.1f%%", mos));
 
+        if (mos >= 30) {
+            // מציאה עמוקה - ירוק כהה + אמוג'י
+            holder.tvMOS.setText("🔥 " + holder.tvMOS.getText());
+            holder.tvMOS.setBackgroundColor(Color.parseColor("#2E7D32"));
+            holder.tvMOS.setTextColor(Color.WHITE);
+        } else if (mos > 0) {
+            // מתחת לערך - ירוק בהיר
+            holder.tvMOS.setText("✅ " + holder.tvMOS.getText());
+            holder.tvMOS.setBackgroundColor(Color.parseColor("#81C784"));
+            holder.tvMOS.setTextColor(Color.BLACK);
+        } else {
+            // יקר מדי - אדום
+            holder.tvMOS.setText("⚠️ " + holder.tvMOS.getText());
+            holder.tvMOS.setBackgroundColor(Color.parseColor("#E57373"));
+            holder.tvMOS.setTextColor(Color.WHITE);
+        }
+
+        // 5. כפתורי עריכה ומחיקה
         holder.btnDelete.setOnClickListener(v -> {
-            if (listener != null) {
-                listener.onDeleteClicked(stock);
-            } else {
-                Log.e("ADAPTER_ERROR", "Listener is null for delete click on ticker: " + stock.getTicker());
-            }
+            if (listener != null) listener.onDeleteClicked(stock);
         });
 
         holder.btnEdit.setOnClickListener(v -> {
-            if (listener != null) {
-                listener.onEditClicked(stock);
-            } else {
-                Log.e("ADAPTER_ERROR", "Listener is null for edit click on ticker: " + stock.getTicker());
-            }
+            if (listener != null) listener.onEditClicked(stock);
         });
-
-        // חישוב ועיצוב ה-Margin of Safety
-        double iv = stock.getIntrinsicValue();
-        if (stock.getEps() == 0 && iv == 0) {
-            holder.tvIntrinsicValue.setText("ערך פנימי: טוען...");
-        } else {
-            holder.tvIntrinsicValue.setText("ערך פנימי: " + String.format("$%.2f", iv));
-        }
-        holder.tvMOS.setText("מרווח ביטחון: " + String.format("%.1f%%", mos));
-        holder.tvDividend.setText(String.format("תשואת דיבידנד: %.2f%%", stock.getDividendYield() * 100));
-        // לוגיקת צבעים לפי רמת ה"ערך"
-        if (mos >= 30) {
-            // "מציאה" עמוקה - ירוק כהה
-            holder.tvMOS.setBackgroundColor(Color.parseColor("#2E7D32"));
-        } else if (mos > 0) {
-            // מתחת לערך - ירוק בהיר
-            holder.tvMOS.setBackgroundColor(Color.parseColor("#81C784"));
-        } else {
-            // יקר מדי - אדום
-            holder.tvMOS.setBackgroundColor(Color.parseColor("#E57373"));
-        }
     }
-
     public List<Stock> getStocks() {
         return stockList;
     }
