@@ -35,6 +35,7 @@ android {
 
 // זה המקום הנכון והיחיד ל-dependencies
 dependencies {
+    implementation(libs.androidx.swiperefreshlayout)
     implementation (libs.mpandroidchart)
     implementation (libs.androidx.work.runtime)
     // רשת ו-JSON

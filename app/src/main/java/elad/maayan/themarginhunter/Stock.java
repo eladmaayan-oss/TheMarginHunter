@@ -7,6 +7,23 @@ import com.google.firebase.firestore.PropertyName;
 import java.util.List;
 
 public class Stock {
+    @PropertyName("fcf")
+    private String fcf;
+    @PropertyName("sharesOutstanding")
+    private String sharesOutstanding;
+
+    @PropertyName("fcf")
+    public String getFcf() { return fcf; }
+
+    @PropertyName("fcf")
+    public void setFcf(String fcf) { this.fcf = fcf; }
+
+    @PropertyName("sharesOutstanding")
+    public String getSharesOutstanding() { return sharesOutstanding; }
+
+    @PropertyName("sharesOutstanding")
+    public void setSharesOutstanding(String sharesOutstanding) { this.sharesOutstanding = sharesOutstanding; }
+
     @PropertyName("ticker")
     private String ticker;
     @PropertyName("growthHint")

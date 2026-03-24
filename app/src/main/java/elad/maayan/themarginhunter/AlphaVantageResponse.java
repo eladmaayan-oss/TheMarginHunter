@@ -17,6 +17,7 @@ public class AlphaVantageResponse {
     }
 
 
+
     public StockQuote getQuote() {
         return quote;
     }

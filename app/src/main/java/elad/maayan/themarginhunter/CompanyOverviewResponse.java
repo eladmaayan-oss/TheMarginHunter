@@ -8,6 +8,12 @@ public class CompanyOverviewResponse {
     @SerializedName("Name") private String name;
     @SerializedName("DividendYield") private String dividendYield;
 
+    @SerializedName("SharesOutstanding")
+    private String sharesOutstanding;
+
+    @SerializedName("SharesOutstanding")
+    public String getSharesOutstanding() {return sharesOutstanding;}
+
     public String getDividendYield() { return dividendYield; }
     @SerializedName("QuarterlyEarningsGrowthYOY") private String quarterlyGrowth;
     public String getQuarterlyGrowth() { return quarterlyGrowth; }

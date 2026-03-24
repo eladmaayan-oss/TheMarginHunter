@@ -26,4 +26,10 @@ public interface StockApiService {
             @Query("symbol") String symbol,
             @Query("apikey") String apiKey
     );
+    @GET("query")
+    Call<CashFlowResponse> getCashFlow(
+            @Query("function") String function, // כאן נעביר "CASH_FLOW"
+            @Query("symbol") String symbol,     // הטיקר, למשל "AAPL"
+            @Query("apikey") String apiKey      // המפתח שלך
+    );
 }

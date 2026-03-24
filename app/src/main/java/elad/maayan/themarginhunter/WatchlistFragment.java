@@ -1,10 +1,14 @@
 package elad.maayan.themarginhunter;
 
 import android.app.AlertDialog;
+import android.content.Context;
+import android.content.SharedPreferences;
 import android.os.Bundle;
 
+import androidx.annotation.NonNull;
 import androidx.fragment.app.Fragment;
 import androidx.navigation.Navigation;
+import androidx.recyclerview.widget.ItemTouchHelper;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
@@ -13,6 +17,7 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import androidx.appcompat.widget.SearchView;
+import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
 
 import android.widget.Button;
 import android.widget.ImageButton;
@@ -20,6 +25,7 @@ import android.widget.ProgressBar;
 import android.widget.Toast;
 
 import com.google.android.material.floatingactionbutton.FloatingActionButton;
+import com.google.android.material.snackbar.Snackbar;
 import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.Query;
 import com.google.firebase.firestore.QueryDocumentSnapshot;
@@ -47,6 +53,9 @@ public class WatchlistFragment extends Fragment implements StockAdapterListener 
     private ProgressBar pbRefresh;
     private ImageButton btnRefreshAll;
     private boolean isRefreshing = false; // משתנה מחלקה למניעת כפילויות
+    private SwipeRefreshLayout swipeRefreshLayout;
+    private int apiRequestsLeft;
+    private static final int DAILY_LIMIT = 25;
 
 
 
@@ -90,25 +99,6 @@ public class WatchlistFragment extends Fragment implements StockAdapterListener 
             mParam2 = getArguments().getString(ARG_PARAM2);
         }
     }
-    private void saveStockToFirestore(String ticker, String name, double price, double eps, double mos) {
-        FirebaseFirestore db = FirebaseFirestore.getInstance();
-
-        // יצירת האובייקט לשמירה
-        StockRecord record = new StockRecord(ticker, name, price, eps, mos);
-
-        // שמירה ב-Firestore (כל מניה תקבל מזהה ייחודי משלה)
-        db.collection("stocks")
-                .add(record)
-                .addOnSuccessListener(documentReference -> {
-                    Log.d("FIRESTORE", "Stock saved with ID: " + documentReference.getId());
-                    Toast.makeText(getContext(), "מניה נשמרה בהצלחה!", Toast.LENGTH_SHORT).show();
-                })
-                .addOnFailureListener(e -> {
-                    Log.e("FIRESTORE", "Error saving stock", e);
-                    Toast.makeText(getContext(), "שגיאה בשמירה: " + e.getMessage(), Toast.LENGTH_SHORT).show();
-                });
-    }
-
 
     @Override
     public View onCreateView(LayoutInflater inflater, ViewGroup container, Bundle savedInstanceState) {
@@ -121,7 +111,12 @@ public class WatchlistFragment extends Fragment implements StockAdapterListener 
         rvWatchlist.setAdapter(adapter);
         pbRefresh = view.findViewById(R.id.pbRefresh);
         btnRefreshAll = view.findViewById(R.id.btnRefreshAll);
+        swipeRefreshLayout = view.findViewById(R.id.swipeRefreshLayout);
 
+        checkApiLimit();
+        swipeRefreshLayout.setOnRefreshListener(() -> {
+            refreshAllStocksPrices();
+        });
 
         btnRefreshAll.setOnClickListener(v -> {
             Log.d("REFRESH", "Refresh button clicked");
@@ -143,7 +138,44 @@ public class WatchlistFragment extends Fragment implements StockAdapterListener 
                 return true;
             }
         });
+        ItemTouchHelper.SimpleCallback simpleCallback = new ItemTouchHelper.SimpleCallback(0, ItemTouchHelper.LEFT | ItemTouchHelper.RIGHT) {
+            @Override
+            public boolean onMove(@NonNull RecyclerView recyclerView, @NonNull RecyclerView.ViewHolder viewHolder, @NonNull RecyclerView.ViewHolder target) {
+                return false; // אנחנו לא צריכים גרירה (Drag & Drop) כרגע
+            }
 
+            @Override
+            public void onSwiped(@NonNull RecyclerView.ViewHolder viewHolder, int direction) {
+                int position = viewHolder.getAdapterPosition();
+
+                // 1. שולפים את המניה שהוחלקה
+                Stock deletedStock = adapter.getStockAt(position);
+                String ticker = deletedStock.getTicker(); // או איך שקראת ל-Getter של הטיקר
+
+                // 2. מסירים אותה קודם כל מהתצוגה (כדי שהאנימציה תהיה חלקה ומידית)
+                adapter.removeItem(position);
+
+                // 3. מוחקים מ-Firebase
+                db.collection("stocks").document(ticker).delete()
+                        .addOnSuccessListener(aVoid -> {
+                            // 4. מציגים הודעה עם אפשרות ביטול (Undo)
+                            Snackbar snackbar = Snackbar.make(getView(), ticker + " removed from Watchlist", Snackbar.LENGTH_LONG);
+                            snackbar.setAction("UNDO", v -> {
+                                // אם המשתמש התחרט - מחזירים ל-Firebase ולתצוגה
+                                db.collection("stocks").document(ticker).set(deletedStock);
+                                adapter.restoreItem(deletedStock, position);
+                            });
+                            snackbar.setActionTextColor(android.graphics.Color.YELLOW);
+                            snackbar.show();
+                        })
+                        .addOnFailureListener(e -> {
+                            // אם המחיקה נכשלה, נחזיר את המניה לתצוגה ונראה שגיאה
+                            adapter.restoreItem(deletedStock, position);
+                            Toast.makeText(getContext(), "Failed to delete stock", Toast.LENGTH_SHORT).show();
+                        });
+            }
+        };
+        new ItemTouchHelper(simpleCallback).attachToRecyclerView(rvWatchlist);
         fetchAllStocks(); // מאזין לשינויים ב-Firestore
         return view;
     }
@@ -209,6 +241,76 @@ public class WatchlistFragment extends Fragment implements StockAdapterListener 
                 }
             }, i * 2000L); // השהיה מצטברת
         }
+    }
+    private void checkApiLimit() {
+        SharedPreferences apiPrefs = requireContext().getSharedPreferences("API_PREFS", Context.MODE_PRIVATE);
+        long lastReset = apiPrefs.getLong("last_reset_date", 0);
+        apiRequestsLeft = apiPrefs.getInt("requests_left", DAILY_LIMIT);
+
+        if (System.currentTimeMillis() - lastReset > 86400000) {
+            apiRequestsLeft = DAILY_LIMIT;
+            apiPrefs.edit()
+                    .putLong("last_reset_date", System.currentTimeMillis())
+                    .putInt("requests_left", apiRequestsLeft)
+                    .apply();
+        }
+    }
+    private void refreshAllStocksPrices() {
+        // נניח שהרשימה שלך נשמרת במשתנה שנקרא stockList
+        // (תחליף את זה בשם של הרשימה האמיתית שיש לך באדפטר או בפרגמנט)
+        int numberOfStocks = stockList.size();
+
+        if (numberOfStocks == 0) {
+            swipeRefreshLayout.setRefreshing(false);
+            return;
+        }
+
+        if (apiRequestsLeft < numberOfStocks) {
+            Toast.makeText(getContext(), "אין מספיק קריאות API לרענן את כל הרשימה (" + apiRequestsLeft + " נותרו)", Toast.LENGTH_LONG).show();
+            swipeRefreshLayout.setRefreshing(false);
+            return;
+        }
+
+        // אם הגענו לכאן - יש מספיק קריאות! נעבור מניה מניה ונעדכן מחיר
+        StockApiService api = RetrofitClient.getApiService();
+        for (Stock stock : stockList) {
+            api.getStockQuote("GLOBAL_QUOTE", stock.getTicker(), "BH00QGEFNFNZ1IDN").enqueue(new Callback<AlphaVantageResponse>() {
+                @Override
+                public void onResponse(Call<AlphaVantageResponse> call, Response<AlphaVantageResponse> response) {
+                    if (response.isSuccessful() && response.body() != null && response.body().getQuote() != null) {
+                        try {
+                            // מורידים קריאה אחת על כל מניה
+                            decreaseApiCount(1);
+
+                            double newPrice = Double.parseDouble(response.body().getQuote().getPrice());
+
+                            // מחשבים את שולי הביטחון (MOS) מחדש!
+                            double iv = stock.getIntrinsicValue();
+                            double newMos = ((iv - newPrice) / iv) * 100;
+
+                            // מעדכנים ב-Firebase (אם יש לך Listener פעיל - הרשימה תתעדכן לבד!)
+                            FirebaseFirestore.getInstance().collection("stocks")
+                                    .document(stock.getTicker())
+                                    .update("currentPrice", newPrice, "marginOfSafety", newMos);
+
+                        } catch (Exception ignored) {}
+                    }
+                }
+                @Override
+                public void onFailure(Call<AlphaVantageResponse> call, Throwable t) {}
+            });
+        }
+
+        // עוצרים את האנימציה המסתובבת (הנתונים יתעדכנו ברקע מ-Firebase)
+        swipeRefreshLayout.setRefreshing(false);
+        Toast.makeText(getContext(), "מרענן מחירים...", Toast.LENGTH_SHORT).show();
+    }
+    private void decreaseApiCount(int amount) {
+        apiRequestsLeft -= amount;
+        if (apiRequestsLeft < 0) apiRequestsLeft = 0;
+
+        SharedPreferences prefs = requireContext().getSharedPreferences("API_PREFS", Context.MODE_PRIVATE);
+        prefs.edit().putInt("requests_left", apiRequestsLeft).apply();
     }
 
     private void updateSingleStockPrice(Stock stock) {

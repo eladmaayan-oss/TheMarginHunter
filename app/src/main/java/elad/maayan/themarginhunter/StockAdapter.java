@@ -65,6 +65,20 @@ public class StockAdapter extends RecyclerView.Adapter<StockAdapter.StockViewHol
         notifyDataSetChanged();
     }
 
+    public Stock getStockAt(int position) {
+        return stockList.get(position); // stockList זה שם הרשימה שלך באדפטר
+    }
+
+    public void removeItem(int position) {
+        stockList.remove(position);
+        notifyItemRemoved(position);
+    }
+
+    public void restoreItem(Stock item, int position) {
+        stockList.add(position, item);
+        notifyItemInserted(position);
+    }
+
     @Override
     public void onBindViewHolder(@NonNull StockAdapter.StockViewHolder holder, int position) {
         Stock stock = stockList.get(position);

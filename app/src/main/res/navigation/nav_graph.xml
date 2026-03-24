@@ -3,7 +3,8 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:id="@+id/nav_graph"
-    app:startDestination="@id/welcomeFragment">
+    app:startDestination="@id/welcomeFragment"
+    >
 
     <!-- Global Action to Add Stock -->
     <action
@@ -19,6 +20,12 @@
             android:id="@+id/action_nav_watchlist_to_addStockFragment"
             app:destination="@id/addStockFragment" />
     </fragment>
+
+    <fragment
+        android:id="@+id/nav_dcf"
+        android:name="elad.maayan.themarginhunter.DcfFragment"
+        android:label="DCF Calculator"
+        tools:layout="@layout/fragment_dcf" />
 
     <fragment
         android:id="@+id/nav_bargains"

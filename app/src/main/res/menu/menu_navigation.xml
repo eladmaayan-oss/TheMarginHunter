@@ -8,4 +8,8 @@
         android:id="@+id/nav_bargains"
         android:icon="@drawable/ic_trending_down"
         android:title="Bargain Bin" />
+    <item
+        android:id="@+id/nav_dcf"
+        android:icon="@drawable/trending_up"
+        android:title="DCF Calculator" />
 </menu>
