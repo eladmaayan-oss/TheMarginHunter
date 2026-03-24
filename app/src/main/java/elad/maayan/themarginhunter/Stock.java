@@ -9,6 +9,8 @@ import java.util.List;
 public class Stock {
     @PropertyName("ticker")
     private String ticker;
+    @PropertyName("growthHint")
+    private String growthHint;
 
     @PropertyName("companyName")
     private String companyName;
@@ -29,7 +31,7 @@ public class Stock {
     private long lastUpdated;
     
     @PropertyName("dividendYield")
-    private double dividendYield;
+    private String dividendYield;
     
     @PropertyName("dividendPerShare")
     private double dividendPerShare;
@@ -64,6 +66,12 @@ public class Stock {
     public void setTicker(String ticker) {
         this.ticker = ticker;
     }
+
+    @PropertyName("growthHint")
+    public String getGrowthHint() { return growthHint; }
+
+    @PropertyName("growthHint")
+    public void setGrowthHint(String growthHint) { this.growthHint = growthHint; }
 
     @PropertyName("companyName")
     public String getCompanyName() {
@@ -126,12 +134,12 @@ public class Stock {
     }
 
     @PropertyName("dividendYield")
-    public double getDividendYield() {
+    public String getDividendYield() {
         return dividendYield;
     }
 
     @PropertyName("dividendYield")
-    public void setDividendYield(double dividendYield) {
+    public void setDividendYield(String dividendYield) {
         this.dividendYield = dividendYield;
     }
 

@@ -149,6 +149,7 @@ public class WatchlistFragment extends Fragment implements StockAdapterListener 
     }
     private void fetchAllStocks() {
         db.collection("stocks")
+                .orderBy("lastUpdated", Query.Direction.DESCENDING)
                 //   .orderBy("marginOfSafety", Query.Direction.DESCENDING)
                 .addSnapshotListener((value, error) -> {
                     if (error != null) {

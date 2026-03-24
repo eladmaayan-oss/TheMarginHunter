@@ -42,12 +42,15 @@ public class AddStockFragment extends BottomSheetDialogFragment {
     private Button btnSave, btnFetch;
     private LineChart lineChart;
     private TextView tvIntrinsicValueResult;
+    private int apiRequestsLeft;
+    private static final int DAILY_LIMIT = 25;
 
     private final FirebaseFirestore db = FirebaseFirestore.getInstance();
 //    private final String API_KEY = "3PY2WSBJ2P1ZUR0K";
-private final String API_KEY = "BH00QGEFNFNZ1IDN";
+    private final String API_KEY = "BH00QGEFNFNZ1IDN";
     private String divYieldStr;
     private Map<String, AlphaVantageResponse.DailyData> currentChartData;
+    private android.content.SharedPreferences apiPrefs;
 
     @Nullable
     @Override
@@ -72,6 +75,7 @@ private final String API_KEY = "BH00QGEFNFNZ1IDN";
         btnFetch = view.findViewById(R.id.btnFetch);
         lineChart = view.findViewById(R.id.lineChart);
         tvIntrinsicValueResult = view.findViewById(R.id.tvIntrinsicValueResult);
+        initApiCounter();
     }
 
     private void setupListeners() {
@@ -87,6 +91,40 @@ private final String API_KEY = "BH00QGEFNFNZ1IDN";
 
         // כפתור שמירה
         btnSave.setOnClickListener(v -> validateAndSave());
+    }
+    private void updateFetchButtonUI() {
+        // עדכון הטקסט של הכפתור
+        btnFetch.setText("Fetch (" + apiRequestsLeft + " calls left)");
+
+        // אם נשארו פחות מ-3 קריאות (שזה מה שצריך למניה אחת), נצבע באדום
+        if (apiRequestsLeft < 3) {
+            btnFetch.setTextColor(android.graphics.Color.RED);
+        }
+    }
+
+    private void initApiCounter() {
+        apiPrefs = requireContext().getSharedPreferences("API_PREFS", android.content.Context.MODE_PRIVATE);
+        long lastReset = apiPrefs.getLong("last_reset_date", 0);
+        apiRequestsLeft = apiPrefs.getInt("requests_left", DAILY_LIMIT);
+
+        // אם עברו 24 שעות (86,400,000 מילישניות), נאפס חזרה ל-25
+        if (System.currentTimeMillis() - lastReset > 86400000) {
+            apiRequestsLeft = DAILY_LIMIT;
+            apiPrefs.edit()
+                    .putLong("last_reset_date", System.currentTimeMillis())
+                    .putInt("requests_left", apiRequestsLeft)
+                    .apply();
+        }
+        updateFetchButtonUI();
+    }
+
+    private void decreaseApiCount() {
+        apiRequestsLeft-=3;
+        android.content.SharedPreferences prefs = requireContext().getSharedPreferences("API_PREFS", android.content.Context.MODE_PRIVATE);
+        prefs.edit().putInt("requests_left", apiRequestsLeft).apply();
+        if (getActivity() != null) {
+            getActivity().runOnUiThread(this::updateFetchButtonUI);
+        }
     }
 
     private void handleArguments(View view) {
@@ -105,13 +143,19 @@ private final String API_KEY = "BH00QGEFNFNZ1IDN";
     }
 
     private void performSmartFetch() {
+        if (apiRequestsLeft <= 0) {
+            Toast.makeText(getContext(), "חרגת ממכסת ה-API להיום!", Toast.LENGTH_LONG).show();
+            return;
+        }
         String ticker = etTicker.getText().toString().trim().toUpperCase();
         if (ticker.isEmpty()) {
             etTicker.setError("נא להזין טיקר");
             return;
         }
 
-        db.collection("stocks").document(ticker).get().addOnSuccessListener(doc -> {
+        db.collection("stocks")
+                .document(ticker)
+                .get().addOnSuccessListener(doc -> {
             if (doc.exists()) {
                 Stock stock = doc.toObject(Stock.class);
                 if (stock != null) {
@@ -141,9 +185,11 @@ private final String API_KEY = "BH00QGEFNFNZ1IDN";
             @Override
             public void onResponse(Call<CompanyOverviewResponse> call, Response<CompanyOverviewResponse> response) {
                 if (response.isSuccessful() && response.body() != null) {
+                    decreaseApiCount();
                     CompanyOverviewResponse overview = response.body();
 
                     if (overview.getEps() != null) {
+                        divYieldStr = overview.getDividendYield();
                         // עדכון UI ראשוני (שם ו-EPS)
                         getActivity().runOnUiThread(() -> {
                             etCompanyName.setText(overview.getName());
@@ -164,6 +210,7 @@ private final String API_KEY = "BH00QGEFNFNZ1IDN";
                                 @Override
                                 public void onResponse(Call<AlphaVantageResponse> call, Response<AlphaVantageResponse> pr) {
                                     if (pr.isSuccessful() && pr.body() != null && pr.body().getQuote() != null) {
+                                        decreaseApiCount();
                                         getActivity().runOnUiThread(() -> {
                                             etPrice.setText(pr.body().getQuote().getPrice());
                                             updateIntrinsicValueRealTime();
@@ -180,6 +227,8 @@ private final String API_KEY = "BH00QGEFNFNZ1IDN";
                         }, 2000);
                     } else {
                         Log.e("API", "EPS is null - Limit reached");
+                        apiRequestsLeft = 0; // חסמו אותנו
+                        updateFetchButtonUI();
                     }
                 }
             }
@@ -191,6 +240,7 @@ private final String API_KEY = "BH00QGEFNFNZ1IDN";
             @Override
             public void onResponse(Call<AlphaVantageResponse> call, Response<AlphaVantageResponse> response) {
                 if (response.isSuccessful() && response.body() != null) {
+                    decreaseApiCount();
                     currentChartData = response.body().getTimeSeries();
                     if (currentChartData != null) {
                         // הוסף את השורה הזו:
@@ -246,37 +296,61 @@ private final String API_KEY = "BH00QGEFNFNZ1IDN";
             String groS = etGrowth.getText().toString();
             if (!epsS.isEmpty() && !priS.isEmpty()) {
                 double eps = Double.parseDouble(epsS), pri = Double.parseDouble(priS), gro = groS.isEmpty() ? 0 : Double.parseDouble(groS);
-                double iv = eps * (8.5 + 2 * gro);
-                tvIntrinsicValueResult.setText(String.format("Intrinsic Value: $%.2f", iv));
-                tvIntrinsicValueResult.setTextColor(iv > pri ? Color.parseColor("#2E7D32") : Color.RED);
+                double yield = (divYieldStr != null && !divYieldStr.equals("None")) ?
+                        Double.parseDouble(divYieldStr) : 0;
+                double baseValue = eps * (8.5 + 2 * gro);
+                // תוספת שווי של דיבידנדים (נניח ל-5 השנים הקרובות)
+                double dividendValue = (pri * yield) * 5;
+                double finalIv = baseValue + dividendValue;
+
+                tvIntrinsicValueResult.setText(String.format("Intrinsic Value: $%.2f", finalIv));
+                tvIntrinsicValueResult.setTextColor(finalIv > pri ? Color.parseColor("#2E7D32") : Color.RED);
             }
         } catch (Exception ignored) {}
     }
 
     private void validateAndSave() {
         String ticker = etTicker.getText().toString().trim().toUpperCase();
-        if (ticker.isEmpty() || etEPS.getText().toString().isEmpty()) return;
+        String epsStr = etEPS.getText().toString();
+        String priceStr = etPrice.getText().toString();
+        String growthStr = etGrowth.getText().toString();
+        if (ticker.isEmpty() || epsStr.isEmpty() || priceStr.isEmpty()) {
+            Toast.makeText(getContext(), "נא למלא את כל הנתונים לפני השמירה", Toast.LENGTH_SHORT).show();
+            return;
+        }
 
-        double price = Double.parseDouble(etPrice.getText().toString());
-        double eps = Double.parseDouble(etEPS.getText().toString());
-        double growth = etGrowth.getText().toString().isEmpty() ? 0 : Double.parseDouble(etGrowth.getText().toString());
-        double iv = eps * (8.5 + 2 * growth);
-        double mos = ((iv - price) / iv) * 100;
+        try {
+            double price = Double.parseDouble(priceStr);
+            double eps = Double.parseDouble(epsStr);
+            double growth = etGrowth.getText().toString().isEmpty() ? 0 : Double.parseDouble(etGrowth.getText().toString());
+            double iv = eps * (8.5 + 2 * growth);
+            double mos = ((iv - price) / iv) * 100;
 
-        Map<String, Object> data = new HashMap<>();
-        data.put("ticker", ticker);
-        data.put("companyName", etCompanyName.getText().toString());
-        data.put("currentPrice", price);
-        data.put("eps", eps);
-        data.put("growthRate", growth);
-        data.put("marginOfSafety", mos);
-        data.put("intrinsicValue", iv);
-        data.put("chartData", currentChartData);
-        data.put("lastUpdated", System.currentTimeMillis());
+            Map<String, Object> data = new HashMap<>();
+            data.put("ticker", ticker);
+            data.put("companyName", etCompanyName.getText().toString());
+            data.put("currentPrice", price);
+            data.put("eps", eps);
+            data.put("growthRate", growth);
+            data.put("marginOfSafety", mos);
+            data.put("intrinsicValue", iv);
+            data.put("chartData", currentChartData);
+            data.put("lastUpdated", System.currentTimeMillis());
+            if (tilGrowth.getHelperText() != null) {
+                data.put("growthHint", tilGrowth.getHelperText().toString());
+            }
+            if (divYieldStr != null) {
+                data.put("dividendYield", divYieldStr);
+            }
 
-        db.collection("stocks").document(ticker).set(data, SetOptions.merge()).addOnSuccessListener(aVoid -> {
-            if (isAdded()) Navigation.findNavController(requireActivity(), R.id.nav_host_fragment).popBackStack();
-        });
+
+            db.collection("stocks").document(ticker).set(data, SetOptions.merge()).addOnSuccessListener(aVoid -> {
+                if (isAdded())
+                    Navigation.findNavController(requireActivity(), R.id.nav_host_fragment).popBackStack();
+            });
+        } catch (Exception e) {
+            Toast.makeText(getContext(), "שגיאה בפורמט המספרים", Toast.LENGTH_SHORT).show();
+        }
     }
 
     private void fillFieldsFromFirebase(Stock stock) {
@@ -284,6 +358,13 @@ private final String API_KEY = "BH00QGEFNFNZ1IDN";
         etPrice.setText(String.valueOf(stock.getPrice()));
         etEPS.setText(String.valueOf(stock.getEps()));
         etGrowth.setText(String.valueOf(stock.getGrowthRate()));
+
+        if (stock.getGrowthHint() != null) {
+            tilGrowth.setHelperText(stock.getGrowthHint());
+        }
+
+        // 3. עדכון הדיבידנד בזיכרון לצורך חישוב ה-IV החדש
+        this.divYieldStr = String.valueOf(stock.getDividendYield());
         updateIntrinsicValueRealTime();
     }
 
@@ -307,10 +388,22 @@ private final String API_KEY = "BH00QGEFNFNZ1IDN";
         });
     }
 
+
     @Override
     public void onStart() {
         super.onStart();
-        View v = getView();
-        if (v != null) BottomSheetBehavior.from((View) v.getParent()).setState(BottomSheetBehavior.STATE_EXPANDED);
+
+        // גישה לדיאלוג עצמו
+        android.app.Dialog dialog = getDialog();
+        if (dialog != null) {
+            // מציאת ה-FrameLayout הפנימי של ה-BottomSheet
+            View bottomSheet = dialog.findViewById(com.google.android.material.R.id.design_bottom_sheet);
+            if (bottomSheet != null) {
+                // הגדרת ה-Behavior ישירות עליו
+                BottomSheetBehavior<View> behavior = BottomSheetBehavior.from(bottomSheet);
+                behavior.setState(BottomSheetBehavior.STATE_EXPANDED);
+                behavior.setSkipCollapsed(true); // מונע ממנו "להיתקע" באמצע כשגוררים למטה
+            }
+        }
     }
 }
