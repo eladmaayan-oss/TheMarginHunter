@@ -111,7 +111,66 @@
                     android:inputType="numberDecimal" />
             </com.google.android.material.textfield.TextInputLayout>
         </LinearLayout>
+        <RadioGroup
+            android:id="@+id/chart_range_group"
+            android:layout_width="match_parent"
+            android:layout_height="40dp"
+            android:orientation="horizontal"
+            android:background="@drawable/bg_radiogroup_pill"
+            android:padding="4dp"
+            android:layout_marginHorizontal="16dp"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="8dp">
 
+            <RadioButton
+                android:id="@+id/btn_1m"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:button="@null"
+                android:background="@drawable/bg_tab_selector"
+                android:textColor="@color/text_tab_selector"
+                android:text="1M"
+                android:textStyle="bold"
+                android:gravity="center"
+                android:checked="true"/>
+
+            <RadioButton
+                android:id="@+id/btn_6m"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:button="@null"
+                android:background="@drawable/bg_tab_selector"
+                android:textColor="@color/text_tab_selector"
+                android:text="6M"
+                android:textStyle="bold"
+                android:gravity="center"/>
+
+            <RadioButton
+                android:id="@+id/btn_1y"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:button="@null"
+                android:background="@drawable/bg_tab_selector"
+                android:textColor="@color/text_tab_selector"
+                android:text="1Y"
+                android:textStyle="bold"
+                android:gravity="center"/>
+
+            <RadioButton
+                android:id="@+id/btn_3y"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:button="@null"
+                android:background="@drawable/bg_tab_selector"
+                android:textColor="@color/text_tab_selector"
+                android:text="3Y"
+                android:textStyle="bold"
+                android:gravity="center"/>
+        </RadioGroup>
         <com.github.mikephil.charting.charts.LineChart
             android:id="@+id/lineChart"
             android:layout_width="match_parent"

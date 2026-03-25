@@ -7,6 +7,7 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
+import android.widget.RadioGroup;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -25,8 +26,13 @@ import com.google.android.material.textfield.TextInputLayout;
 import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.SetOptions;
 
+import com.github.mikephil.charting.components.XAxis;
+import com.github.mikephil.charting.formatter.ValueFormatter;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Locale;
+
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -42,15 +48,13 @@ public class AddStockFragment extends BottomSheetDialogFragment {
     private Button btnSave, btnFetch;
     private LineChart lineChart;
     private TextView tvIntrinsicValueResult;
-    private int apiRequestsLeft;
-    private static final int DAILY_LIMIT = 25;
 
     private final FirebaseFirestore db = FirebaseFirestore.getInstance();
-//    private final String API_KEY = "3PY2WSBJ2P1ZUR0K";
-    private final String API_KEY = "BH00QGEFNFNZ1IDN";
+    private String API_KEY;
     private String divYieldStr;
-    private Map<String, AlphaVantageResponse.DailyData> currentChartData;
-    private android.content.SharedPreferences apiPrefs;
+    private String currentTicker = "";
+    private List<Double> currentChartPrices; // שומרים את המחירים לטובת Firebase
+    private List<Long> currentChartTimestamps;
 
     @Nullable
     @Override
@@ -63,6 +67,8 @@ public class AddStockFragment extends BottomSheetDialogFragment {
     }
 
     private void initViews(View view) {
+        API_KEY = getString(R.string.finnhub_api_key);
+
         etTicker = view.findViewById(R.id.etTicker);
         etEPS = view.findViewById(R.id.etEPS);
         etGrowth = view.findViewById(R.id.etGrowth);
@@ -75,64 +81,84 @@ public class AddStockFragment extends BottomSheetDialogFragment {
         btnFetch = view.findViewById(R.id.btnFetch);
         lineChart = view.findViewById(R.id.lineChart);
         tvIntrinsicValueResult = view.findViewById(R.id.tvIntrinsicValueResult);
-        initApiCounter();
+        RadioGroup chartRangeGroup = view.findViewById(R.id.chart_range_group);
+        chartRangeGroup.setOnCheckedChangeListener((group, checkedId) -> {
+            if (currentTicker.isEmpty()) return; // לא עושים כלום אם עדיין לא חיפשו מניה
+
+            if (checkedId == R.id.btn_1m) {
+                fetchYahooChartDynamic(currentTicker, "1mo", "1d", "dd/MM");
+            } else if (checkedId == R.id.btn_6m) {
+                fetchYahooChartDynamic(currentTicker, "6mo", "1d", "MM/yy");
+            } else if (checkedId == R.id.btn_1y) {
+                fetchYahooChartDynamic(currentTicker, "1y", "1d", "MM/yy");
+            } else if (checkedId == R.id.btn_3y) {
+                // ב-3 שנים אנחנו קופצים שבוע קדימה בכל נר, אחרת הגרף יהיה צפוף מדי ויקרוס
+                fetchYahooChartDynamic(currentTicker, "3y", "1wk", "MM/yy");
+            }
+        });
     }
 
     private void setupListeners() {
-        // חישוב בזמן אמת
         etGrowth.addTextChangedListener(new android.text.TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
             @Override public void onTextChanged(CharSequence s, int start, int before, int count) { updateIntrinsicValueRealTime(); }
             @Override public void afterTextChanged(android.text.Editable s) {}
         });
 
-        // כפתור Fetch משולב (Firebase -> API)
         btnFetch.setOnClickListener(v -> performSmartFetch());
-
-        // כפתור שמירה
         btnSave.setOnClickListener(v -> validateAndSave());
     }
-    private void updateFetchButtonUI() {
-        // עדכון הטקסט של הכפתור
-        btnFetch.setText("Fetch (" + apiRequestsLeft + " calls left)");
 
-        // אם נשארו פחות מ-3 קריאות (שזה מה שצריך למניה אחת), נצבע באדום
-        if (apiRequestsLeft < 3) {
-            btnFetch.setTextColor(android.graphics.Color.RED);
-        }
+    private void fetchYahooChartDynamic(String ticker, String range, String interval, String dateFormat) {
+        if (ticker == null || ticker.isEmpty()) return;
+        StockApiService api = RetrofitClient.getApiService();
+        String yahooUrl = "https://query1.finance.yahoo.com/v8/finance/chart/" + ticker + "?range=" + range + "&interval=" + interval;
+
+        api.getYahooChart(yahooUrl).enqueue(new Callback<YahooChartResponse>() {
+            @Override
+            public void onResponse(Call<YahooChartResponse> call, Response<YahooChartResponse> response) {
+                if (response.isSuccessful() && response.body() != null) {
+                    try {
+                        List<Double> closes = response.body().getChart().getResult().get(0).getIndicators().getQuote().get(0).getClose();
+                        List<Long> timestamps = response.body().getChart().getResult().get(0).getTimestamp();
+
+                        List<Double> cleanPrices = new ArrayList<>();
+                        List<Long> cleanTimestamps = new ArrayList<>();
+
+                        for (int i = 0; i < closes.size(); i++) {
+                            Double price = closes.get(i);
+                            if (price != null && timestamps != null && timestamps.get(i) != null) {
+                                cleanPrices.add(price);
+                                cleanTimestamps.add(timestamps.get(i));
+                            }
+                        }
+
+                        currentChartPrices = cleanPrices;
+                        currentChartTimestamps = cleanTimestamps;
+
+                        if(getActivity() != null) {
+                            getActivity().runOnUiThread(() -> drawChart(cleanPrices, dateFormat));
+                        }
+
+                    } catch (Exception e) {
+                        Log.e("YAHOO_ERROR", "שגיאה בפענוח הגרף של יאהו", e);
+                    }
+                }
+            }
+
+            @Override
+            public void onFailure(Call<YahooChartResponse> call, Throwable t) {
+                if(getActivity() != null) {
+                    getActivity().runOnUiThread(() -> Toast.makeText(getContext(), "שגיאה במשיכת גרף: " + t.getMessage(), Toast.LENGTH_SHORT).show());
+                }
+            }
+        });
     }
-
-    private void initApiCounter() {
-        apiPrefs = requireContext().getSharedPreferences("API_PREFS", android.content.Context.MODE_PRIVATE);
-        long lastReset = apiPrefs.getLong("last_reset_date", 0);
-        apiRequestsLeft = apiPrefs.getInt("requests_left", DAILY_LIMIT);
-
-        // אם עברו 24 שעות (86,400,000 מילישניות), נאפס חזרה ל-25
-        if (System.currentTimeMillis() - lastReset > 86400000) {
-            apiRequestsLeft = DAILY_LIMIT;
-            apiPrefs.edit()
-                    .putLong("last_reset_date", System.currentTimeMillis())
-                    .putInt("requests_left", apiRequestsLeft)
-                    .apply();
-        }
-        updateFetchButtonUI();
-    }
-
-    private void decreaseApiCount() {
-        apiRequestsLeft-=3;
-        android.content.SharedPreferences prefs = requireContext().getSharedPreferences("API_PREFS", android.content.Context.MODE_PRIVATE);
-        prefs.edit().putInt("requests_left", apiRequestsLeft).apply();
-        if (getActivity() != null) {
-            getActivity().runOnUiThread(this::updateFetchButtonUI);
-        }
-    }
-
     private void handleArguments(View view) {
         if (getArguments() != null) {
             String tickerArg = getArguments().getString("ticker");
             if (tickerArg != null) {
                 etTicker.setText(tickerArg);
-                // אם אנחנו במצב "עדכון", נטען מ-Firebase, אחרת נלחץ אוטומטית על Fetch
                 if (btnSave.getText().toString().equals("Update Stock")) {
                     setupEditMode(tickerArg);
                 } else {
@@ -143,10 +169,6 @@ public class AddStockFragment extends BottomSheetDialogFragment {
     }
 
     private void performSmartFetch() {
-        if (apiRequestsLeft <= 0) {
-            Toast.makeText(getContext(), "חרגת ממכסת ה-API להיום!", Toast.LENGTH_LONG).show();
-            return;
-        }
         String ticker = etTicker.getText().toString().trim().toUpperCase();
         if (ticker.isEmpty()) {
             etTicker.setError("נא להזין טיקר");
@@ -156,139 +178,134 @@ public class AddStockFragment extends BottomSheetDialogFragment {
         db.collection("stocks")
                 .document(ticker)
                 .get().addOnSuccessListener(doc -> {
-            if (doc.exists()) {
-                Stock stock = doc.toObject(Stock.class);
-                if (stock != null) {
-                    fillFieldsFromFirebase(stock);
-                    Map<String, Object> rawChart = (Map<String, Object>) doc.get("chartData");
-                    if (rawChart != null) {
-                        currentChartData = convertToDailyData(rawChart);
-                        setupChart(lineChart, currentChartData);
-                        lineChart.setVisibility(View.VISIBLE);
-                        Toast.makeText(getContext(), "נטען מהמאגר המקומי", Toast.LENGTH_SHORT).show();
+                    if (doc.exists()) {
+                        Stock stock = doc.toObject(Stock.class);
+                        if (stock != null) {
+                            fillFieldsFromFirebase(stock);
+                            // שליפת הגרף מ-Firebase
+                            List<Double> rawChart = (List<Double>) doc.get("chartPrices");
+                            if (rawChart != null) {
+                                currentChartPrices = new ArrayList<>();
+                                for(Double d : rawChart) {
+                                    currentChartPrices.add(d);
+                                }
+                                drawChart(currentChartPrices, "dd/MM");
+                                Toast.makeText(getContext(), "נטען מהמאגר המקומי", Toast.LENGTH_SHORT).show();
+                            } else {
+                                fetchStockData(ticker); // אם אין גרף, נמשוך מהרשת
+                            }
+                        }
                     } else {
-                        fetchChartData(ticker, lineChart);
+                        fetchStockData(ticker);
                     }
-                }
-            } else {
-                // אם לא קיים ב-Firebase: משוך קודם נתונים, הגרף ימשך אוטומטית אחריהם
-                fetchStockData(ticker);
-            }
-        }).addOnFailureListener(e -> fetchStockData(ticker));
+                }).addOnFailureListener(e -> fetchStockData(ticker));
     }
-
 
     private void fetchStockData(String ticker) {
         StockApiService api = RetrofitClient.getApiService();
 
-        api.getCompanyOverview("OVERVIEW", ticker, API_KEY).enqueue(new Callback<CompanyOverviewResponse>() {
+        // 1. קריאת שם החברה
+        api.getCompanyProfile(ticker, API_KEY).enqueue(new Callback<FinnhubProfileResponse>() {
             @Override
-            public void onResponse(Call<CompanyOverviewResponse> call, Response<CompanyOverviewResponse> response) {
-                if (response.isSuccessful() && response.body() != null) {
-                    decreaseApiCount();
-                    CompanyOverviewResponse overview = response.body();
-
-                    if (overview.getEps() != null) {
-                        divYieldStr = overview.getDividendYield();
-                        // עדכון UI ראשוני (שם ו-EPS)
-                        getActivity().runOnUiThread(() -> {
-                            etCompanyName.setText(overview.getName());
-                            etEPS.setText(overview.getEps());
-
-                            // עדכון Growth hint
-                            if (overview.getQuarterlyGrowth() != null) {
-                                try {
-                                    double g = Double.parseDouble(overview.getQuarterlyGrowth()) * 100;
-                                    tilGrowth.setHelperText("Consensus: " + String.format("%.1f%%", g));
-                                } catch (Exception e) { Log.e("API", "Growth parse error"); }
-                            }
-                        });
-
-                        // מחכים 2 שניות ל-Quote
-                        new android.os.Handler().postDelayed(() -> {
-                            api.getStockQuote("GLOBAL_QUOTE", ticker, API_KEY).enqueue(new Callback<AlphaVantageResponse>() {
-                                @Override
-                                public void onResponse(Call<AlphaVantageResponse> call, Response<AlphaVantageResponse> pr) {
-                                    if (pr.isSuccessful() && pr.body() != null && pr.body().getQuote() != null) {
-                                        decreaseApiCount();
-                                        getActivity().runOnUiThread(() -> {
-                                            etPrice.setText(pr.body().getQuote().getPrice());
-                                            updateIntrinsicValueRealTime();
-                                        });
-
-                                        // מחכים *עוד* 2 שניות לגרף - כדי לא לעצבן את ה-API
-                                        new android.os.Handler().postDelayed(() -> {
-                                            fetchChartData(ticker, lineChart);
-                                        }, 2000);
-                                    }
-                                }
-                                @Override public void onFailure(Call<AlphaVantageResponse> call, Throwable t) {}
-                            });
-                        }, 2000);
-                    } else {
-                        Log.e("API", "EPS is null - Limit reached");
-                        apiRequestsLeft = 0; // חסמו אותנו
-                        updateFetchButtonUI();
+            public void onResponse(Call<FinnhubProfileResponse> call, Response<FinnhubProfileResponse> response) {
+                if (response.isSuccessful() && response.body() != null && response.body().getCompanyName() != null) {
+                    String companyName = response.body().getCompanyName();
+                    if(getActivity() != null) {
+                        getActivity().runOnUiThread(() -> etCompanyName.setText(companyName));
                     }
                 }
             }
-            @Override public void onFailure(Call<CompanyOverviewResponse> call, Throwable t) {}
-        });
-    }
-    private void fetchChartData(String ticker, LineChart chart) {
-        RetrofitClient.getApiService().getDailySeries("TIME_SERIES_DAILY", ticker, API_KEY).enqueue(new Callback<AlphaVantageResponse>() {
             @Override
-            public void onResponse(Call<AlphaVantageResponse> call, Response<AlphaVantageResponse> response) {
-                if (response.isSuccessful() && response.body() != null) {
-                    decreaseApiCount();
-                    currentChartData = response.body().getTimeSeries();
-                    if (currentChartData != null) {
-                        // הוסף את השורה הזו:
-                        getActivity().runOnUiThread(() -> {
-                            chart.setVisibility(View.VISIBLE);
-                            setupChart(chart, currentChartData);
-                        });
-                    }                }
-            }
-            @Override public void onFailure(Call<AlphaVantageResponse> call, Throwable t) {}
+            public void onFailure(Call<FinnhubProfileResponse> call, Throwable t) {}
         });
-    }
 
-
-    private void setupChart(LineChart chart, Map<String, AlphaVantageResponse.DailyData> history) {
-        if (history == null || history.isEmpty()) return;
-
-        List<Entry> entries = new ArrayList<>();
-        List<String> dates = new ArrayList<>(history.keySet());
-        Collections.sort(dates);
-
-        int index = 0;
-        for (String date : dates) {
-            String closePrice = history.get(date).getClose();
-            if (closePrice != null) {
-                entries.add(new Entry(index++, Float.parseFloat(closePrice)));
+        // 2. קריאת המחיר הנוכחי
+        api.getStockQuote(ticker, API_KEY).enqueue(new Callback<FinnhubQuoteResponse>() {
+            @Override
+            public void onResponse(Call<FinnhubQuoteResponse> call, Response<FinnhubQuoteResponse> response) {
+                if (response.isSuccessful() && response.body() != null) {
+                    double currentPrice = response.body().getCurrentPrice();
+                    if(getActivity() != null) {
+                        getActivity().runOnUiThread(() -> etPrice.setText(String.valueOf(currentPrice)));
+                    }
+                }
             }
+            @Override
+            public void onFailure(Call<FinnhubQuoteResponse> call, Throwable t) {
+                Log.e("API_ERROR", "Failed to fetch quote");
+            }
+        });
+
+        // 3. קריאת הנתונים הפיננסיים (EPS ו-Growth)
+        api.getStockMetrics(ticker, "all", API_KEY).enqueue(new Callback<FinnhubMetricResponse>() {
+            @Override
+            public void onResponse(Call<FinnhubMetricResponse> call, Response<FinnhubMetricResponse> response) {
+                if (response.isSuccessful() && response.body() != null && response.body().getMetric() != null) {
+                    double eps = response.body().getMetric().getEps();
+                    double growth = response.body().getMetric().getGrowth();
+                    if(getActivity() != null) {
+                        getActivity().runOnUiThread(() -> {
+                            etEPS.setText(String.valueOf(eps));
+                            etGrowth.setText(String.valueOf(growth));
+                            updateIntrinsicValueRealTime();
+                        });
+                    }
+                }
+            }
+            @Override
+            public void onFailure(Call<FinnhubMetricResponse> call, Throwable t) {}
+        });
+
+        currentTicker = ticker; // שמירת המניה הנוכחית
+        fetchYahooChartDynamic(ticker, "1mo", "1d", "dd/MM"); // קריאה ראשונית של חודש
+            }
+
+    private void drawChart(List<Double> closePrices, String dateFormat) {
+        lineChart.setVisibility(View.VISIBLE);
+        List<Entry> entries = new ArrayList<>();
+
+        for (int i = 0; i < closePrices.size(); i++) {
+            // Entry מקבל Float, אז אנחנו ממירים את ה-Double ל-Float כאן:
+            entries.add(new Entry(i, closePrices.get(i).floatValue()));
         }
-        LineDataSet ds = new LineDataSet(entries, "Price History");
-        ds.setColor(Color.parseColor("#2E7D32")); // ירוק כהה שיתאים לאפליקציה
-        ds.setLineWidth(2f);
-        ds.setDrawCircles(false);
-        ds.setDrawValues(false);
-        ds.setMode(LineDataSet.Mode.CUBIC_BEZIER); // גרף חלק יותר
 
-        LineData lineData = new LineData(ds);
-        chart.setData(lineData);
+        LineDataSet dataSet = new LineDataSet(entries, "Price History");
+        dataSet.setColor(Color.parseColor("#4CAF50"));
+        dataSet.setDrawCircles(false);
+        dataSet.setLineWidth(2f);
+        dataSet.setDrawValues(false);
+        dataSet.setMode(LineDataSet.Mode.CUBIC_BEZIER);
 
-        // הגדרות עיצוב הכרחיות
-        chart.getAxisRight().setEnabled(false);
-        chart.getXAxis().setDrawLabels(false);
-        chart.getDescription().setEnabled(false);
-        chart.getLegend().setEnabled(false);
+        LineData lineData = new LineData(dataSet);
+        lineChart.setData(lineData);
 
-        chart.animateX(800);
-        chart.invalidate(); // פקודה קריטית לציור מחדש    }
+        lineChart.getDescription().setEnabled(false);
+        lineChart.getAxisRight().setEnabled(false);
+        XAxis xAxis = lineChart.getXAxis();
+        xAxis.setPosition(XAxis.XAxisPosition.BOTTOM); // מציג למטה
+        xAxis.setDrawLabels(true); // מפעיל את הכיתוב
+        xAxis.setDrawGridLines(false); // מעלים את קווי הרשת המכוערים
+        xAxis.setTextColor(Color.GRAY); // צבע אפור ואלגנטי
+        xAxis.setGranularity(1f); // קפיצות שלמות
+        xAxis.setLabelCount(5, false); // מציג רק 5 תאריכים כדי שלא יהיה צפוף מדי
+
+        // ממיר את האינדקסים בגרף לתאריכים אמיתיים (יום/חודש)
+        xAxis.setValueFormatter(new ValueFormatter() {
+            private final SimpleDateFormat mFormat = new SimpleDateFormat(dateFormat, Locale.getDefault());            @Override
+            public String getFormattedValue(float value) {
+                int index = (int) value;
+                if (currentChartTimestamps != null && index >= 0 && index < currentChartTimestamps.size()) {
+                    long millis = currentChartTimestamps.get(index) * 1000L;
+                    return mFormat.format(new Date(millis));
+                }
+                return "";
+            }
+        });
+        lineChart.getLegend().setEnabled(false);
+
+        lineChart.animateX(1000);
+        lineChart.invalidate();
     }
-
     private void updateIntrinsicValueRealTime() {
         try {
             String epsS = etEPS.getText().toString();
@@ -299,7 +316,6 @@ public class AddStockFragment extends BottomSheetDialogFragment {
                 double yield = (divYieldStr != null && !divYieldStr.equals("None")) ?
                         Double.parseDouble(divYieldStr) : 0;
                 double baseValue = eps * (8.5 + 2 * gro);
-                // תוספת שווי של דיבידנדים (נניח ל-5 השנים הקרובות)
                 double dividendValue = (pri * yield) * 5;
                 double finalIv = baseValue + dividendValue;
 
@@ -313,7 +329,7 @@ public class AddStockFragment extends BottomSheetDialogFragment {
         String ticker = etTicker.getText().toString().trim().toUpperCase();
         String epsStr = etEPS.getText().toString();
         String priceStr = etPrice.getText().toString();
-        String growthStr = etGrowth.getText().toString();
+
         if (ticker.isEmpty() || epsStr.isEmpty() || priceStr.isEmpty()) {
             Toast.makeText(getContext(), "נא למלא את כל הנתונים לפני השמירה", Toast.LENGTH_SHORT).show();
             return;
@@ -334,15 +350,18 @@ public class AddStockFragment extends BottomSheetDialogFragment {
             data.put("growthRate", growth);
             data.put("marginOfSafety", mos);
             data.put("intrinsicValue", iv);
-            data.put("chartData", currentChartData);
             data.put("lastUpdated", System.currentTimeMillis());
+
+            // שומרים את רשימת המחירים עבור הגרף
+            if (currentChartPrices != null) {
+                data.put("chartPrices", currentChartPrices);
+            }
             if (tilGrowth.getHelperText() != null) {
                 data.put("growthHint", tilGrowth.getHelperText().toString());
             }
             if (divYieldStr != null) {
                 data.put("dividendYield", divYieldStr);
             }
-
 
             db.collection("stocks").document(ticker).set(data, SetOptions.merge()).addOnSuccessListener(aVoid -> {
                 if (isAdded())
@@ -363,21 +382,8 @@ public class AddStockFragment extends BottomSheetDialogFragment {
             tilGrowth.setHelperText(stock.getGrowthHint());
         }
 
-        // 3. עדכון הדיבידנד בזיכרון לצורך חישוב ה-IV החדש
         this.divYieldStr = String.valueOf(stock.getDividendYield());
         updateIntrinsicValueRealTime();
-    }
-
-    private Map<String, AlphaVantageResponse.DailyData> convertToDailyData(Map<String, Object> raw) {
-        Map<String, AlphaVantageResponse.DailyData> history = new HashMap<>();
-        for (Map.Entry<String, Object> entry : raw.entrySet()) {
-            Map<String, Object> vals = (Map<String, Object>) entry.getValue();
-            AlphaVantageResponse.DailyData daily = new AlphaVantageResponse.DailyData();
-            Object close = vals.get("close") != null ? vals.get("close") : vals.get("4. close");
-            daily.setClose(String.valueOf(close));
-            history.put(entry.getKey(), daily);
-        }
-        return history;
     }
 
     private void setupEditMode(String ticker) {
@@ -388,21 +394,16 @@ public class AddStockFragment extends BottomSheetDialogFragment {
         });
     }
 
-
     @Override
     public void onStart() {
         super.onStart();
-
-        // גישה לדיאלוג עצמו
         android.app.Dialog dialog = getDialog();
         if (dialog != null) {
-            // מציאת ה-FrameLayout הפנימי של ה-BottomSheet
             View bottomSheet = dialog.findViewById(com.google.android.material.R.id.design_bottom_sheet);
             if (bottomSheet != null) {
-                // הגדרת ה-Behavior ישירות עליו
                 BottomSheetBehavior<View> behavior = BottomSheetBehavior.from(bottomSheet);
                 behavior.setState(BottomSheetBehavior.STATE_EXPANDED);
-                behavior.setSkipCollapsed(true); // מונע ממנו "להיתקע" באמצע כשגוררים למטה
+                behavior.setSkipCollapsed(true);
             }
         }
     }

@@ -6,6 +6,7 @@ import retrofit2.http.GET;
 import retrofit2.http.Headers;
 import retrofit2.http.Path;
 import retrofit2.http.Query;
+import retrofit2.http.Url;
 
 public interface StockApiService {
     @GET("query")
@@ -32,4 +33,23 @@ public interface StockApiService {
             @Query("symbol") String symbol,     // הטיקר, למשל "AAPL"
             @Query("apikey") String apiKey      // המפתח שלך
     );
+    @GET("quote")
+    Call<FinnhubQuoteResponse> getStockQuote(
+            @Query("symbol") String symbol,
+            @Query("token") String apiKey
+    );
+
+    @GET("stock/metric")
+    Call<FinnhubMetricResponse> getStockMetrics(
+            @Query("symbol") String symbol,
+            @Query("metric") String metricType, // אנחנו נעביר כאן "all"
+            @Query("token") String apiKey
+    );
+    @GET("stock/profile2")
+    Call<FinnhubProfileResponse> getCompanyProfile(
+            @Query("symbol") String symbol,
+            @Query("token") String apiKey
+    );
+    @GET
+    Call<YahooChartResponse> getYahooChart(@Url String url);
 }
