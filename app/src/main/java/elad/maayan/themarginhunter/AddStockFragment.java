@@ -11,6 +11,7 @@ import android.widget.RadioGroup;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.core.content.ContextCompat;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.navigation.Navigation;
@@ -51,10 +52,10 @@ public class AddStockFragment extends BottomSheetDialogFragment {
 
     private final FirebaseFirestore db = FirebaseFirestore.getInstance();
     private String API_KEY;
-    private String divYieldStr;
     private String currentTicker = "";
     private List<Double> currentChartPrices; // שומרים את המחירים לטובת Firebase
     private List<Long> currentChartTimestamps;
+    private double currentDividendYield = 0.0;
 
     @Nullable
     @Override
@@ -243,6 +244,7 @@ public class AddStockFragment extends BottomSheetDialogFragment {
                 if (response.isSuccessful() && response.body() != null && response.body().getMetric() != null) {
                     double eps = response.body().getMetric().getEps();
                     double growth = response.body().getMetric().getGrowth();
+                    currentDividendYield = response.body().getMetric().getDividendYield();
                     if(getActivity() != null) {
                         getActivity().runOnUiThread(() -> {
                             etEPS.setText(String.valueOf(eps));
@@ -271,6 +273,8 @@ public class AddStockFragment extends BottomSheetDialogFragment {
 
         LineDataSet dataSet = new LineDataSet(entries, "Price History");
         dataSet.setColor(Color.parseColor("#4CAF50"));
+        dataSet.setDrawFilled(true); // מפעיל את השטח המלא
+        dataSet.setFillDrawable(ContextCompat.getDrawable(requireContext(), R.drawable.fade_green)); // מגדיר את ה-Gradient שיצרנו
         dataSet.setDrawCircles(false);
         dataSet.setLineWidth(2f);
         dataSet.setDrawValues(false);
@@ -313,10 +317,10 @@ public class AddStockFragment extends BottomSheetDialogFragment {
             String groS = etGrowth.getText().toString();
             if (!epsS.isEmpty() && !priS.isEmpty()) {
                 double eps = Double.parseDouble(epsS), pri = Double.parseDouble(priS), gro = groS.isEmpty() ? 0 : Double.parseDouble(groS);
-                double yield = (divYieldStr != null && !divYieldStr.equals("None")) ?
-                        Double.parseDouble(divYieldStr) : 0;
+//                double yield = (currentDividendYield != null && !currentDividendYield.equals("None")) ?
+//                        Double.parseDouble(currentDividendYield) : 0;
                 double baseValue = eps * (8.5 + 2 * gro);
-                double dividendValue = (pri * yield) * 5;
+                double dividendValue = (pri * currentDividendYield) * 5;
                 double finalIv = baseValue + dividendValue;
 
                 tvIntrinsicValueResult.setText(String.format("Intrinsic Value: $%.2f", finalIv));
@@ -352,6 +356,7 @@ public class AddStockFragment extends BottomSheetDialogFragment {
             data.put("intrinsicValue", iv);
             data.put("lastUpdated", System.currentTimeMillis());
 
+
             // שומרים את רשימת המחירים עבור הגרף
             if (currentChartPrices != null) {
                 data.put("chartPrices", currentChartPrices);
@@ -359,9 +364,7 @@ public class AddStockFragment extends BottomSheetDialogFragment {
             if (tilGrowth.getHelperText() != null) {
                 data.put("growthHint", tilGrowth.getHelperText().toString());
             }
-            if (divYieldStr != null) {
-                data.put("dividendYield", divYieldStr);
-            }
+            data.put("dividendYield", currentDividendYield);
 
             db.collection("stocks").document(ticker).set(data, SetOptions.merge()).addOnSuccessListener(aVoid -> {
                 if (isAdded())
@@ -382,10 +385,11 @@ public class AddStockFragment extends BottomSheetDialogFragment {
             tilGrowth.setHelperText(stock.getGrowthHint());
         }
 
-        this.divYieldStr = String.valueOf(stock.getDividendYield());
+        this.currentDividendYield = stock.getDividendYield();
+        // ----------------------------------------------------------------------
+
         updateIntrinsicValueRealTime();
     }
-
     private void setupEditMode(String ticker) {
         etTicker.setEnabled(false);
         btnSave.setText("Update Stock");

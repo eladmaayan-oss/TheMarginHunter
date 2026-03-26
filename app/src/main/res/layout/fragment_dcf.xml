@@ -38,8 +38,7 @@
                     style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:hint="Ticker (e.g. AAPL)"
-                    android:layout_marginBottom="12dp">
+                    android:hint="Ticker (e.g. AAPL)">
 
                     <com.google.android.material.textfield.TextInputEditText
                         android:id="@+id/etDcfTicker"
@@ -49,12 +48,29 @@
                         android:maxLines="1" />
                 </com.google.android.material.textfield.TextInputLayout>
 
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnAutoFill"
+                    style="@style/Widget.MaterialComponents.Button.TextButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="end"
+                    android:layout_marginTop="-4dp"
+                    android:layout_marginBottom="8dp"
+                    android:text="🪄 Auto-Fill Estimates"
+                    android:textColor="#FF9800"
+                    android:textSize="13sp"
+                    app:rippleColor="#4DFF9800" />
+
                 <com.google.android.material.textfield.TextInputLayout
+                    android:id="@+id/layoutDcfGrowth"
                     style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:hint="Expected Growth Rate % (Years 1-5)"
-                    android:layout_marginBottom="12dp">
+                    android:layout_marginBottom="12dp"
+                    app:endIconMode="custom"
+                    app:endIconDrawable="@android:drawable/ic_dialog_info"
+                    app:endIconTint="@color/design_default_color_primary">
 
                     <com.google.android.material.textfield.TextInputEditText
                         android:id="@+id/etDcfGrowth"
@@ -64,11 +80,15 @@
                 </com.google.android.material.textfield.TextInputLayout>
 
                 <com.google.android.material.textfield.TextInputLayout
+                    android:id="@+id/layoutDcfDiscount"
                     style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:hint="Discount Rate % (WACC)"
-                    android:layout_marginBottom="12dp">
+                    android:layout_marginBottom="12dp"
+                    app:endIconMode="custom"
+                    app:endIconDrawable="@android:drawable/ic_dialog_info"
+                    app:endIconTint="@color/design_default_color_primary">
 
                     <com.google.android.material.textfield.TextInputEditText
                         android:id="@+id/etDcfDiscountRate"
@@ -79,10 +99,14 @@
                 </com.google.android.material.textfield.TextInputLayout>
 
                 <com.google.android.material.textfield.TextInputLayout
+                    android:id="@+id/layoutDcfTerminal"
                     style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:hint="Terminal Growth Rate % (Forever)">
+                    android:hint="Terminal Growth Rate % (Forever)"
+                    app:endIconMode="custom"
+                    app:endIconDrawable="@android:drawable/ic_dialog_info"
+                    app:endIconTint="@color/design_default_color_primary">
 
                     <com.google.android.material.textfield.TextInputEditText
                         android:id="@+id/etDcfTerminalGrowth"
@@ -94,7 +118,6 @@
 
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
-
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnCalculateDcf"
             android:layout_width="match_parent"

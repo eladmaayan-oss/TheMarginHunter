@@ -18,9 +18,16 @@ public class FinnhubMetricResponse {
         @SerializedName("epsGrowth5Y")
         private double growth;
 
+        @SerializedName("dividendYieldIndicatedAnnual")
+        private Double dividendYield;
+
+        public Double getDividendYield() {
+            return dividendYield != null ? dividendYield : 0.0;
+        }
         public double getGrowth() {
             return growth;
         }
+
 
         public double getEps() {
             return eps;

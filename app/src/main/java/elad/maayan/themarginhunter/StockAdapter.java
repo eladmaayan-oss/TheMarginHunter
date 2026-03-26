@@ -95,17 +95,13 @@ public class StockAdapter extends RecyclerView.Adapter<StockAdapter.StockViewHol
             holder.tvIntrinsicValue.setText(String.format("ערך פנימי: $%.2f", iv));
         }
 
-        double div = 0.0;
-        String yieldStr = stock.getDividendYield();
-
-// בודקים שהמחרוזת לא null, לא ריקה, ולא המילה "None"
-        if (yieldStr != null && !yieldStr.trim().isEmpty() && !yieldStr.equalsIgnoreCase("None")) {
-            try {
-                div = Double.parseDouble(yieldStr);
-            } catch (NumberFormatException e) {
-                // אם מאיזושהי סיבה זה לא מספר, נבלע את השגיאה והערך יישאר 0.0
-            }
+        double div = stock.getDividendYield();
+        if (div > 0) {
+            holder.tvDividend.setText(String.format("דיבידנד: %.2f%%", div));
+        } else {
+            holder.tvDividend.setText("ללא דיבידנד");
         }
+
         // 4. לוגיקת צבעים ואמוג'ים לפי ה-MOS (מרווח ביטחון)
         double mos = stock.getMarginOfSafety();
         holder.tvMOS.setText(String.format("מרווח ביטחון: %.1f%%", mos));

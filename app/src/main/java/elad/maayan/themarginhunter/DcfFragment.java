@@ -1,5 +1,7 @@
 package elad.maayan.themarginhunter;
 
+import android.os.Handler;
+import android.os.Looper;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.os.Bundle;
@@ -8,6 +10,7 @@ import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.Button;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -18,11 +21,12 @@ import androidx.fragment.app.Fragment;
 
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.card.MaterialCardView;
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.android.material.textfield.TextInputEditText;
 import com.google.firebase.firestore.FirebaseFirestore;
+import com.google.firebase.firestore.SetOptions;
 
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 
 import retrofit2.Call;
@@ -30,7 +34,10 @@ import retrofit2.Callback;
 import retrofit2.Response;
 
 public class DcfFragment extends Fragment {
-    private static final String API_KEY = "BH00QGEFNFNZ1IDN";
+//    private static final String API_KEY = "BH00QGEFNFNZ1IDN";
+    private static final String API_KEY = "7IGGZ2PPMOUAVS98";
+
+
     private TextInputEditText etTicker, etGrowth, etDiscount, etTerminalGrowth;
     private MaterialButton btnCalculate;
     private ProgressBar progressBar;
@@ -49,6 +56,7 @@ public class DcfFragment extends Fragment {
         initViews(view);
         return view;
     }
+
     private void initViews(View view) {
         etTicker = view.findViewById(R.id.etDcfTicker);
         etGrowth = view.findViewById(R.id.etDcfGrowth);
@@ -63,7 +71,37 @@ public class DcfFragment extends Fragment {
 
         btnCalculate.setOnClickListener(v -> startDcfProcess());
         initApiCounter();
+        com.google.android.material.textfield.TextInputLayout layoutGrowth = view.findViewById(R.id.layoutDcfGrowth);
+        com.google.android.material.textfield.TextInputLayout layoutDiscount = view.findViewById(R.id.layoutDcfDiscount);
+        com.google.android.material.textfield.TextInputLayout layoutTerminal = view.findViewById(R.id.layoutDcfTerminal);
+        layoutGrowth.setEndIconOnClickListener(v -> showTipDialog(
+                "Expected Growth Rate",
+                "הערך בכמה אחוזים החברה תגדיל את התזרים שלה ב-5 השנים הקרובות.\n\n" +
+                        "• חברות בוגרות ויציבות: 3%-7%\n" +
+                        "• חברות צמיחה: 10%-15%\n\n" +
+                        "💡 טיפ: אל תהיה אופטימי מדי, צמיחה עקבית של מעל 20% לאורך זמן היא נדירה מאוד."
+        ));
+
+        layoutDiscount.setEndIconOnClickListener(v -> showTipDialog(
+                "Discount Rate (WACC)",
+                "התשואה השנתית שאתה דורש על ההשקעה, שמשקללת את הסיכון.\n\n" +
+                        "• חברות בטוחות ענקיות (כמו Apple): 8%-9%\n" +
+                        "• חברות ממוצעות: 10%\n" +
+                        "• מניות מסוכנות או קטנות: 12% ומעלה"
+        ));
+        layoutTerminal.setEndIconOnClickListener(v -> showTipDialog(
+                "Terminal Growth Rate",
+                "קצב הצמיחה של החברה לנצח (החל מהשנה ה-6 ואילך).\n\n" +
+                        "הכלל הכי חשוב: חברה לא יכולה לצמוח לנצח יותר מהר מהכלכלה העולמית, אחרת היא תבלע את העולם.\n\n" +
+                        "💡 טיפ: הסטנדרט המקובל בוורן באפט ובוול סטריט הוא תמיד בין 2% ל-3% (באזור קצב האינפלציה)."
+        ));
+        Button btnAutoFill = view.findViewById(R.id.btnAutoFill);
+        btnAutoFill.setOnClickListener(v -> {
+            String ticker = etTicker.getText().toString().trim().toUpperCase();
+            autoFillDcfParams(ticker);
+        });
     }
+
     private void startDcfProcess() {
         String ticker = etTicker.getText().toString().trim().toUpperCase();
         String growthStr = etGrowth.getText().toString().trim();
@@ -93,45 +131,120 @@ public class DcfFragment extends Fragment {
 
                     calculateAndDisplayDcf(fcf, shares, currentPrice, growthRate, discountRate, terminalGrowth);
                 } catch (Exception e) {
-                    // אם הייתה שגיאת המרה מה-DB, נמשוך מחדש מה-API
-                    fetchDataFromApi(ticker, growthRate, discountRate, terminalGrowth);
+                    checkQuotaAndFetch(ticker, growthRate, discountRate, terminalGrowth);
                 }
             } else {
-                if (apiRequestsLeft < 3) {
-                    Toast.makeText(getContext(), "חרגת ממכסת ה-API להיום!", Toast.LENGTH_LONG).show();
-                    progressBar.setVisibility(View.GONE);
-                    btnCalculate.setEnabled(true);
-                    return; // עוצרים הכל ולא פונים ל-API
-                }
                 Log.d("DCF", "Data missing in Firebase. Fetching from API...");
-                fetchDataFromApi(ticker, growthRate, discountRate, terminalGrowth);
+                checkQuotaAndFetch(ticker, growthRate, discountRate, terminalGrowth);
             }
         }).addOnFailureListener(e -> {
-            fetchDataFromApi(ticker, growthRate, discountRate, terminalGrowth);
+            checkQuotaAndFetch(ticker, growthRate, discountRate, terminalGrowth);
+        });
+    }
+
+    private void autoFillDcfParams(String ticker) {
+        if (ticker.isEmpty()) {
+            showError("אנא הזן סימול מניה קודם.");
+            return;
+        }
+
+        showError("מחשב נתוני סיכון ותחזיות אנליסטים..."); // הודעה קטנה למשתמש
+
+        // חייבים לבקש מיאהו במפורש את המודל של earningsTrend בנוסף לסטטיסטיקות
+        String url = "https://query2.finance.yahoo.com/v10/finance/quoteSummary/" + ticker +
+                "?modules=defaultKeyStatistics,earningsTrend";
+
+        StockApiService api = RetrofitClient.getApiService();
+        api.getYahooSummary(url).enqueue(new Callback<YahooSummaryResponse>() {
+            @Override
+            public void onResponse(Call<YahooSummaryResponse> call, Response<YahooSummaryResponse> response) {
+                if (response.isSuccessful() && response.body() != null &&
+                        response.body().getQuoteSummary() != null &&
+                        response.body().getQuoteSummary().getResult() != null) {
+
+                    YahooSummaryResponse.Result result = response.body().getQuoteSummary().getResult().get(0);
+
+                    // 1. חישוב Discount Rate (WACC) בעזרת Beta
+                    double discountRate = 10.0; // ברירת מחדל
+                    if (result.getDefaultKeyStatistics() != null && result.getDefaultKeyStatistics().getBeta() != null) {
+                        double beta = result.getDefaultKeyStatistics().getBeta().getRaw();
+                        if (beta < 0.8) discountRate = 8.0;       // חברה מאוד בטוחה ויציבה
+                        else if (beta > 1.3) discountRate = 12.0; // חברה מסוכנת/תנודתית
+                        else discountRate = 10.0;                 // חברה ממוצעת
+                    }
+
+                    // 2. שליפת תחזית צמיחה ל-5 שנים (Expected Growth)
+                    double expectedGrowth = 10.0; // ברירת מחדל
+                    if (result.getEarningsTrend() != null && result.getEarningsTrend().getTrend() != null) {
+                        for (YahooSummaryResponse.Trend trend : result.getEarningsTrend().getTrend()) {
+                            if ("+5y".equals(trend.getPeriod()) && trend.getGrowth() != null) {
+                                // יאהו מחזיר את זה כשבר עשרוני (למשל 0.15 עבור 15%), אז נכפיל ב-100
+                                expectedGrowth = trend.getGrowth().getRaw() * 100;
+                                break;
+                            }
+                        }
+                    }
+
+                    // 3. הצגת הנתונים בשדות הטקסט של ה-UI (אל תשכח לשנות ל-IDs המדויקים של ה-EditText שלך!)
+                    etGrowth.setText(String.format("%.1f", expectedGrowth));
+                    etDiscount.setText(String.format("%.1f", discountRate));
+                    etTerminalGrowth.setText("2.5"); // נתון מאקרו קבוע ובטוח
+
+                    showError("הנתונים מולאו בהצלחה!"); // אפשר גם להחליף את זה ב-Toast של הצלחה
+                } else {
+                    try {
+                        String errorBody = response.errorBody() != null ? response.errorBody().string() : "No error body";
+                        showError("שגיאת יאהו (" + response.code() + "): " + response.message());
+                        android.util.Log.e("DCF_MAGIC", "HTTP " + response.code() + " | Body: " + errorBody);
+                    } catch (Exception e) {
+                        showError("שגיאה לא ידועה מקוד השרת: " + response.code());
+                    }
+                }
+            }
+
+
+                @Override
+                public void onFailure (Call < YahooSummaryResponse > call, Throwable t){
+                    showError("קריסה בחיבור ליאהו: " + t.getMessage());
+                    android.util.Log.e("DCF_MAGIC", "Network failure", t);
+                }
 
         });
     }
+
+    private void checkQuotaAndFetch(String ticker, double growthRate, double discountRate, double terminalGrowth) {
+        if (apiRequestsLeft < 3) {
+            showError("חרגת ממכסת ה-API להיום!");
+            return; // עוצרים הכל ולא פונים ל-API
+        }
+        fetchDataFromApi(ticker, growthRate, discountRate, terminalGrowth);
+    }
+
     // שרשור קריאות API: קודם Cash Flow, ואז Overview (למניות), ואז Quote (למחיר)
     private void fetchDataFromApi(String ticker, double growthRate, double discountRate, double terminalGrowth) {
         decreaseApiCount(3);
         StockApiService api = RetrofitClient.getApiService();
 
-        // 1. קריאה ל-CASH_FLOW
         api.getCashFlow("CASH_FLOW", ticker, API_KEY).enqueue(new Callback<CashFlowResponse>() {
             @Override
             public void onResponse(Call<CashFlowResponse> call, Response<CashFlowResponse> response) {
                 if (response.isSuccessful() && response.body() != null && response.body().getAnnualReports() != null && !response.body().getAnnualReports().isEmpty()) {
                     AnnualReport report = response.body().getAnnualReports().get(0);
-                    try {
-                        double opCash = Double.parseDouble(report.getOperatingCashflow());
-                        double capEx = Double.parseDouble(report.getCapitalExpenditures());
-                        double fcf = opCash - Math.abs(capEx);
 
-                        // 2. קריאה ל-OVERVIEW כדי להביא Shares Outstanding
-                        fetchOverviewForDcf(api, ticker, fcf, growthRate, discountRate, terminalGrowth);
-                    } catch (NumberFormatException e) {
-                        showError("Failed to parse Cash Flow data");
+                    double opCash = parseAlphaDouble(report.getOperatingCashflow());
+                    double capEx = parseAlphaDouble(report.getCapitalExpenditures());
+                    double fcf = opCash - Math.abs(capEx);
+
+                    if (fcf == 0.0) {
+                        showError("לא נמצאו נתוני תזרים מזומנים תקינים (FCF) עבור המניה הזו באלפא.");
+                        return;
                     }
+
+                    // *** כאן הקסם: ממתינים 1.2 שניות לפני הקריאה הבאה! ***
+                    new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                        fetchOverviewForDcf(api, ticker, fcf, growthRate, discountRate, terminalGrowth);
+                    }, 1200);
+
                 } else {
                     showError("API Error: Cash Flow data not found");
                 }
@@ -140,18 +253,30 @@ public class DcfFragment extends Fragment {
             public void onFailure(Call<CashFlowResponse> call, Throwable t) { showError("Network Error"); }
         });
     }
+
     private void fetchOverviewForDcf(StockApiService api, String ticker, double fcf, double growthRate, double discountRate, double terminalGrowth) {
         api.getCompanyOverview("OVERVIEW", ticker, API_KEY).enqueue(new Callback<CompanyOverviewResponse>() {
             @Override
             public void onResponse(Call<CompanyOverviewResponse> call, Response<CompanyOverviewResponse> response) {
                 if (response.isSuccessful() && response.body() != null) {
                     try {
-                        double shares = Double.parseDouble(response.body().getSharesOutstanding());
-                        // 3. קריאה למחיר הנוכחי
-                        fetchQuoteForDcf(api, ticker, fcf, shares, growthRate, discountRate, terminalGrowth);
+                        double shares = parseAlphaDouble(response.body().getSharesOutstanding());
+
+                        if (shares == 0.0) {
+                            showError("לא נמצאו נתוני מניות (Shares Outstanding) לחברה זו.");
+                            return;
+                        }
+
+                        // *** ממתינים עוד 1.2 שניות לפני ששואבים את המחיר! ***
+                        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                            fetchQuoteForDcf(api, ticker, fcf, shares, growthRate, discountRate, terminalGrowth);
+                        }, 1200);
+
                     } catch (Exception e) {
                         showError("Failed to parse Shares Outstanding");
                     }
+                } else {
+                    showError("API Error: Overview data not found");
                 }
             }
             @Override
@@ -159,46 +284,14 @@ public class DcfFragment extends Fragment {
         });
     }
 
-    private void initApiCounter() {
-        if (getActivity() == null) return;
+    private void showTipDialog(String title, String message) {
+        if (getContext() == null) return;
 
-        SharedPreferences apiPrefs = requireContext().getSharedPreferences("API_PREFS", Context.MODE_PRIVATE);
-        long lastReset = apiPrefs.getLong("last_reset_date", 0);
-        apiRequestsLeft = apiPrefs.getInt("requests_left", DAILY_LIMIT);
-
-        // אם עברו 24 שעות (86,400,000 מילישניות), נאפס חזרה ל-25
-        if (System.currentTimeMillis() - lastReset > 86400000) {
-            apiRequestsLeft = DAILY_LIMIT;
-            apiPrefs.edit()
-                    .putLong("last_reset_date", System.currentTimeMillis())
-                    .putInt("requests_left", apiRequestsLeft)
-                    .apply();
-        }
-        updateCalculateButtonUI();
-    }
-
-    private void updateCalculateButtonUI() {
-        if (getActivity() == null) return;
-        getActivity().runOnUiThread(() -> {
-            btnCalculate.setText("Calculate (" + apiRequestsLeft + " calls left)");
-
-            // צביעת הטקסט באדום אם אין מספיק קריאות לחישוב מלא (צריך 3 קריאות)
-            if (apiRequestsLeft < 3) {
-                btnCalculate.setTextColor(android.graphics.Color.RED);
-            } else {
-                btnCalculate.setTextColor(android.graphics.Color.WHITE); // או הצבע הדיפולטיבי של הכפתור שלך
-            }
-        });
-    }
-    private void decreaseApiCount(int amount) {
-        if (getActivity() == null) return;
-        apiRequestsLeft -= amount;
-        if (apiRequestsLeft < 0) apiRequestsLeft = 0; // לא נרד מתחת לאפס
-
-        SharedPreferences prefs = requireContext().getSharedPreferences("API_PREFS", Context.MODE_PRIVATE);
-        prefs.edit().putInt("requests_left", apiRequestsLeft).apply();
-
-        updateCalculateButtonUI();
+        new MaterialAlertDialogBuilder(requireContext())
+                .setTitle(title)
+                .setMessage(message)
+                .setPositiveButton("הבנתי", null)
+                .show();
     }
 
     private void fetchQuoteForDcf(StockApiService api, String ticker, double fcf, double shares, double growthRate, double discountRate, double terminalGrowth) {
@@ -224,14 +317,16 @@ public class DcfFragment extends Fragment {
             }
         });
     }
+
     private void saveToFirebase(String ticker, double fcf, double shares, double price) {
         Map<String, Object> updates = new HashMap<>();
         updates.put("fcf", String.valueOf(fcf));
         updates.put("sharesOutstanding", String.valueOf(shares));
         if (price > 0) updates.put("price", String.valueOf(price));
 
-        db.collection("stocks").document(ticker).set(updates, com.google.firebase.firestore.SetOptions.merge());
+        db.collection("stocks").document(ticker).set(updates, SetOptions.merge());
     }
+
     // נוסחת ה-DCF
     private void calculateAndDisplayDcf(double fcf, double shares, double currentPrice, double growthRate, double discountRate, double terminalGrowth) {
         double projectedFcf = fcf;
@@ -253,6 +348,7 @@ public class DcfFragment extends Fragment {
         double valuePerShare = totalIntrinsicValue / shares;
 
         // עדכון UI
+        if (getActivity() == null) return;
         getActivity().runOnUiThread(() -> {
             progressBar.setVisibility(View.GONE);
             btnCalculate.setEnabled(true);
@@ -279,12 +375,68 @@ public class DcfFragment extends Fragment {
             }
         });
     }
+
+    private void initApiCounter() {
+        if (getActivity() == null) return;
+
+        SharedPreferences apiPrefs = requireContext().getSharedPreferences("API_PREFS", Context.MODE_PRIVATE);
+        long lastReset = apiPrefs.getLong("last_reset_date", 0);
+        apiRequestsLeft = apiPrefs.getInt("requests_left", DAILY_LIMIT);
+
+        // אם עברו 24 שעות (86,400,000 מילישניות), נאפס חזרה ל-25
+//        if (System.currentTimeMillis() - lastReset > 86400000) {
+        if (System.currentTimeMillis() - lastReset > 0) {
+
+            apiRequestsLeft = DAILY_LIMIT;
+            apiPrefs.edit()
+                    .putLong("last_reset_date", System.currentTimeMillis())
+                    .putInt("requests_left", apiRequestsLeft)
+                    .apply();
+        }
+        updateCalculateButtonUI();
+    }
+
+    private void updateCalculateButtonUI() {
+        if (getActivity() == null) return;
+        getActivity().runOnUiThread(() -> {
+            btnCalculate.setText("Calculate (" + apiRequestsLeft + " calls left)");
+
+            // צביעת הטקסט באדום אם אין מספיק קריאות לחישוב מלא (צריך 3 קריאות)
+            if (apiRequestsLeft < 3) {
+                btnCalculate.setTextColor(android.graphics.Color.RED);
+            } else {
+                btnCalculate.setTextColor(android.graphics.Color.WHITE);
+            }
+        });
+    }
+
+    private void decreaseApiCount(int amount) {
+        if (getActivity() == null) return;
+        apiRequestsLeft -= amount;
+        if (apiRequestsLeft < 0) apiRequestsLeft = 0; // לא נרד מתחת לאפס
+
+        SharedPreferences prefs = requireContext().getSharedPreferences("API_PREFS", Context.MODE_PRIVATE);
+        prefs.edit().putInt("requests_left", apiRequestsLeft).apply();
+
+        updateCalculateButtonUI();
+    }
+
     private void showError(String msg) {
+        if (getActivity() == null) return;
         getActivity().runOnUiThread(() -> {
             progressBar.setVisibility(View.GONE);
             btnCalculate.setEnabled(true);
             Toast.makeText(getContext(), msg, Toast.LENGTH_LONG).show();
         });
     }
+    private double parseAlphaDouble(String value) {
+        if (value == null || value.equalsIgnoreCase("none") || value.trim().isEmpty()) {
+            return 0.0;
+        }
+        try {
+            return Double.parseDouble(value);
+        } catch (NumberFormatException e) {
+            return 0.0;
+        }
+    }
 }
-

@@ -51,5 +51,7 @@ public interface StockApiService {
             @Query("token") String apiKey
     );
     @GET
+    Call<YahooSummaryResponse> getYahooSummary(@Url String url);
+    @GET
     Call<YahooChartResponse> getYahooChart(@Url String url);
 }

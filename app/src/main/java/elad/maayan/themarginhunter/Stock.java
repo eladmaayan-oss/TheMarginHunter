@@ -48,7 +48,7 @@ public class Stock {
     private long lastUpdated;
     
     @PropertyName("dividendYield")
-    private String dividendYield;
+    private double dividendYield;
     
     @PropertyName("dividendPerShare")
     private double dividendPerShare;
@@ -151,12 +151,12 @@ public class Stock {
     }
 
     @PropertyName("dividendYield")
-    public String getDividendYield() {
+    public double getDividendYield() {
         return dividendYield;
     }
 
     @PropertyName("dividendYield")
-    public void setDividendYield(String dividendYield) {
+    public void setDividendYield(double dividendYield) {
         this.dividendYield = dividendYield;
     }
 
