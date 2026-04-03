@@ -55,6 +55,7 @@ public class Stock {
     
     @PropertyName("eps")
     private double eps;
+    private double expectedGrowth;
     
     @PropertyName("growthRate")
     private double growthRate;
@@ -73,6 +74,14 @@ public class Stock {
     public Stock() {
         // Required for Firestore
     }
+
+    public void setExpectedGrowth(double expectedGrowth) {
+        this.expectedGrowth = expectedGrowth;
+    }
+    public double getExpectedGrowth() {
+        return expectedGrowth;
+    }
+
 
     @PropertyName("ticker")
     public String getTicker() {

@@ -23,6 +23,10 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
+import retrofit2.Call;
+import retrofit2.Callback;
+import retrofit2.Response;
+
 /**
  * A simple {@link Fragment} subclass.
  * Use the {@link BargainsFragment#newInstance} factory method to
@@ -36,7 +40,9 @@ public class BargainsFragment extends Fragment implements StockAdapterListener {
     private List<Stock> bargainStocksList = new ArrayList<>();
     private StockAdapter adapter;
     private FirebaseFirestore db = FirebaseFirestore.getInstance();
-
+    private View layoutProgress;
+    private ProgressBar progressBarHorizontal;
+    private android.widget.TextView tvProgressText;
 
     // TODO: Rename parameter arguments, choose names that match
     // the fragment initialization parameters, e.g. ARG_ITEM_NUMBER
@@ -51,6 +57,87 @@ public class BargainsFragment extends Fragment implements StockAdapterListener {
         // Required empty public constructor
     }
 
+    private void scanMarketForBargains() {
+        List<String> tickers = StockUniverse.getTopStocks();
+        StockApiService apiService = RetrofitClient.getApiService();
+        int totalStocks = tickers.size();
+
+        // 1. מדליקים רק את הפס ההתקדמות החדש
+        layoutProgress.setVisibility(View.VISIBLE);
+        progressBarHorizontal.setMax(totalStocks);
+        progressBarHorizontal.setProgress(0);
+        tvProgressText.setText("סורק מניות: 0 / " + totalStocks);
+
+        final int[] completedCalls = {0};
+
+        for (String ticker : tickers) {
+            String url = "https://query2.finance.yahoo.com/v10/finance/quoteSummary/" + ticker + "?modules=defaultKeyStatistics,financialData";
+
+            apiService.getYahooSummary(url).enqueue(new Callback<YahooSummaryResponse>() {
+                @Override
+                public void onResponse(Call<YahooSummaryResponse> call, Response<YahooSummaryResponse> response) {
+                    completedCalls[0]++;
+
+                    // 2. קוראים לפונקציה שמעדכנת את המספרים במסך!
+                    updateProgressUI(completedCalls[0], totalStocks);
+
+                    if (response.isSuccessful() && response.body() != null) {
+                        try {
+                            YahooSummaryResponse.Result result = response.body().getQuoteSummary().getResult().get(0);
+
+                            double currentPrice = result.getFinancialData().getCurrentPrice().getRaw();
+                            double eps = result.getDefaultKeyStatistics().getTrailingEps().getRaw();
+
+                            double growthRate = 5.0;
+                            double intrinsicValue = eps * (8.5 + 2 * growthRate);
+                            double marginOfSafetyPrice = intrinsicValue * 0.90;
+
+                            if (currentPrice < marginOfSafetyPrice) {
+                                Log.d("BARGAIN_HUNTER", "מצאנו מציאה! " + ticker);
+
+                                // חישוב מרווח הביטחון באחוזים
+                                double marginOfSafetyPct = ((intrinsicValue - currentPrice) / intrinsicValue) * 100;
+
+                                Stock newBargain = new Stock();
+                                newBargain.setTicker(ticker);
+                                newBargain.setCurrentPrice(currentPrice);
+                                newBargain.setIntrinsicValue(intrinsicValue);
+
+                                // השורה שהוספנו: שמירת מרווח הביטחון באובייקט לפני השליחה ל-Firebase
+                                newBargain.setMarginOfSafety(marginOfSafetyPct);
+
+                                db.collection("stocks").document(ticker)
+                                        .set(newBargain)
+                                        .addOnSuccessListener(aVoid -> Log.d("BARGAIN_HUNTER", ticker + " נשמרה ב-Firebase!"));
+                            }
+                        } catch (Exception e) {
+                            Log.e("BARGAIN_HUNTER", "חסרים נתונים או שגיאת פרסור עבור " + ticker);
+                        }
+                    }
+                }
+
+                @Override
+                public void onFailure(Call<YahooSummaryResponse> call, Throwable t) {
+                    completedCalls[0]++;
+
+                    // גם אם יש שגיאת רשת במניה מסוימת, נקדם את הבר
+                    updateProgressUI(completedCalls[0], totalStocks);
+                }
+            });
+        }
+    }
+
+    // 3. פונקציית העזר שחייבת להיות כאן כדי לעדכן את התצוגה ולסגור אותה בסוף
+    private void updateProgressUI(int current, int total) {
+        progressBarHorizontal.setProgress(current);
+        tvProgressText.setText("סורק מניות: " + current + " / " + total);
+
+        // כשהגענו למניה האחרונה - מעלימים את הבר
+        if (current == total) {
+            layoutProgress.setVisibility(View.GONE);
+            Toast.makeText(getContext(), "סריקת השוק הסתיימה", Toast.LENGTH_SHORT).show();
+        }
+    }
     /**
      * Use this factory method to create a new instance of
      * this fragment using the provided parameters.
@@ -83,8 +170,9 @@ public class BargainsFragment extends Fragment implements StockAdapterListener {
                              Bundle savedInstanceState) {
         View view = inflater.inflate(R.layout.fragment_bargains, container, false);
         rvBargains = view.findViewById(R.id.rvBargains);
-        progressBar = view.findViewById(R.id.progressBar);
-        layoutEmpty = view.findViewById(R.id.layoutEmpty);
+        layoutProgress = view.findViewById(R.id.layoutProgress);
+        progressBarHorizontal = view.findViewById(R.id.progressBarHorizontal);
+        tvProgressText = view.findViewById(R.id.tvProgressText);        layoutEmpty = view.findViewById(R.id.layoutEmpty);
         adapter = new StockAdapter(bargainStocksList, this);
         FloatingActionButton fabAdd = view.findViewById(R.id.fabAddStock);
 
@@ -116,22 +204,41 @@ public class BargainsFragment extends Fragment implements StockAdapterListener {
             layoutEmpty.setVisibility(View.GONE);
             rvBargains.setVisibility(View.VISIBLE);
         }
+// מציאת סרגל הכלים שהוספנו ל-XML
+        com.google.android.material.appbar.MaterialToolbar toolbar = view.findViewById(R.id.topAppBar);
+
+        // הגדרת מאזין ללחיצות על התפריט (הרדאר שלנו)
+        toolbar.setOnMenuItemClickListener(item -> {
+            if (item.getItemId() == R.id.action_scan_market) {
+                Toast.makeText(getContext(), "מפעיל סורק שוק...", Toast.LENGTH_SHORT).show();
+                scanMarketForBargains(); // הפעלת פונקציית הסריקה!
+                return true;
+            }
+            return false;
+        });
 
         return view;
     }
 
+    private void saveBargainToFirebase(Stock stock) {
+        FirebaseFirestore db = FirebaseFirestore.getInstance();
+
+        // אנחנו משתמשים בטיקר כ-ID כדי שלא יהיו כפילויות של אותה מניה
+        db.collection("bargain_stocks").document(stock.getTicker())
+                .set(stock)
+                .addOnSuccessListener(aVoid -> Log.d("Firebase", "Stock saved: " + stock.getTicker()))
+                .addOnFailureListener(e -> Log.e("Firebase", "Error saving", e));
+    }
+
     private void fetchBargainStocks() {
-        progressBar.setVisibility(View.VISIBLE);
 
         // שימוש ב-addSnapshotListener במקום ב-get()
         db.collection("stocks")
                 .whereGreaterThan("intrinsicValue", 0)
                 .addSnapshotListener((value, error) -> {
                     if (isAdded()) {
-                        progressBar.setVisibility(View.GONE);
-
                         if (error != null) {
-                            Log.e("Firebase", "Listen failed.", error);
+                            Log.e("Firebase", "Listen failed.");
                             return;
                         }
 
@@ -144,6 +251,7 @@ public class BargainsFragment extends Fragment implements StockAdapterListener {
                                 // סינון מניות ערך
                                 if (stock.getCurrentPrice() < stock.getIntrinsicValue()) {
                                     bargainStocksList.add(stock);
+                                    saveBargainToFirebase(stock);
                                 }
                             }
 

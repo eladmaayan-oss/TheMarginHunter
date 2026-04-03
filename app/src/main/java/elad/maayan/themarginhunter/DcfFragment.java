@@ -18,15 +18,20 @@ import android.widget.Toast;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.fragment.app.Fragment;
+import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
 
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.card.MaterialCardView;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.android.material.textfield.TextInputEditText;
 import com.google.firebase.firestore.FirebaseFirestore;
+import com.google.firebase.firestore.QueryDocumentSnapshot;
 import com.google.firebase.firestore.SetOptions;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import retrofit2.Call;
@@ -40,11 +45,18 @@ public class DcfFragment extends Fragment {
 
     private TextInputEditText etTicker, etGrowth, etDiscount, etTerminalGrowth;
     private MaterialButton btnCalculate;
+    private View layoutProgress;
+    private ProgressBar progressBarHorizontal;
+    private TextView tvProgressText;
     private ProgressBar progressBar;
     private MaterialCardView cardResult;
     private TextView tvIntrinsicValue, tvCurrentPrice, tvConclusion;
     private static final int DAILY_LIMIT = 25;
     private int apiRequestsLeft;
+    private RecyclerView rvDcfStocks;
+    private DcfStockAdapter dcfAdapter;
+    private List<Stock> dcfBargainList;
+    private Button btnScanDcf;
 
     private FirebaseFirestore db;
 
@@ -63,11 +75,21 @@ public class DcfFragment extends Fragment {
         etDiscount = view.findViewById(R.id.etDcfDiscountRate);
         etTerminalGrowth = view.findViewById(R.id.etDcfTerminalGrowth);
         btnCalculate = view.findViewById(R.id.btnCalculateDcf);
-        progressBar = view.findViewById(R.id.progressBarDcf);
+        layoutProgress = view.findViewById(R.id.layoutProgress);
+        progressBarHorizontal = view.findViewById(R.id.progressBarHorizontal);
+        tvProgressText = view.findViewById(R.id.tvProgressText);
         cardResult = view.findViewById(R.id.cardDcfResult);
         tvIntrinsicValue = view.findViewById(R.id.tvDcfIntrinsicValue);
         tvCurrentPrice = view.findViewById(R.id.tvDcfCurrentPrice);
         tvConclusion = view.findViewById(R.id.tvDcfConclusion);
+        progressBar = view.findViewById(R.id.progressBarDcf);
+        rvDcfStocks = view.findViewById(R.id.rvDcfStocks);
+        rvDcfStocks.setLayoutManager(new LinearLayoutManager(getContext()));
+        dcfBargainList = new ArrayList<>();
+        dcfAdapter = new DcfStockAdapter(dcfBargainList);
+        rvDcfStocks.setAdapter(dcfAdapter);
+        btnScanDcf = view.findViewById(R.id.btnScanDcfMarket);
+        btnScanDcf.setOnClickListener(v -> scanDcfMarket());
 
         btnCalculate.setOnClickListener(v -> startDcfProcess());
         initApiCounter();
@@ -99,6 +121,40 @@ public class DcfFragment extends Fragment {
         btnAutoFill.setOnClickListener(v -> {
             String ticker = etTicker.getText().toString().trim().toUpperCase();
             autoFillDcfParams(ticker);
+        });
+        fetchDcfBargains();
+    }
+
+    private void fetchDcfBargains() {
+        db.collection("dcf_stocks")
+                .addSnapshotListener((value, error) -> {
+                    if (isAdded()) {
+                        if (error != null) {
+                            Log.e("DCF", "Listen failed.");
+                            return;
+                        }
+                        if (value != null) {
+                            dcfBargainList.clear();
+                            for (QueryDocumentSnapshot document : value) {
+                                Stock stock = document.toObject(Stock.class);
+                                dcfBargainList.add(stock);
+                            }
+                            dcfAdapter.notifyDataSetChanged();
+                        }
+                    }
+                });
+    }
+
+    private void updateProgressUI(int current, int total) {
+        if (getActivity() == null) return;
+        getActivity().runOnUiThread(() -> {
+            progressBarHorizontal.setProgress(current);
+            tvProgressText.setText("סורק מניות: " + current + " / " + total);
+
+            if (current == total) {
+                layoutProgress.setVisibility(View.GONE);
+                Toast.makeText(getContext(), "סריקת DCF הסתיימה", Toast.LENGTH_SHORT).show();
+            }
         });
     }
 
@@ -210,6 +266,151 @@ public class DcfFragment extends Fragment {
                 }
 
         });
+    }
+
+    private void scanDcfMarket() {
+        // 1. מוודאים ששדה הטיקר ריק
+        String tickerInput = etTicker.getText().toString().trim();
+        if (!TextUtils.isEmpty(tickerInput)) {
+            showError("כדי לסרוק את השוק, אנא נקה את שדה הטיקר (Ticker).");
+            return;
+        }
+
+        // 2. משיכת הנתונים מהמחשבון
+        String growthStr = etGrowth.getText().toString().trim();
+        String discountStr = etDiscount.getText().toString().trim();
+        String terminalStr = etTerminalGrowth.getText().toString().trim();
+
+        final Double customGrowth = TextUtils.isEmpty(growthStr) ? null : Double.parseDouble(growthStr) / 100.0;
+        final Double customDiscount = TextUtils.isEmpty(discountStr) ? null : Double.parseDouble(discountStr) / 100.0;
+        final Double customTerminal = TextUtils.isEmpty(terminalStr) ? null : Double.parseDouble(terminalStr) / 100.0;
+
+        layoutProgress.setVisibility(View.VISIBLE);
+        tvProgressText.setText("מכין רשימה ממניות גראהם...");
+
+        // 3. מחיקת תוצאות DCF קודמות
+        db.collection("dcf_stocks").get().addOnSuccessListener(queryDocumentSnapshots -> {
+            for (QueryDocumentSnapshot doc : queryDocumentSnapshots) {
+                doc.getReference().delete();
+            }
+
+            // 4. *** כאן השינוי! שולפים את המניות מה-Bargain Bin ***
+            // שנה את "bargain_stocks" אם האוסף שלך נקרא אחרת
+            db.collection("bargain_stocks").get().addOnSuccessListener(bargainSnapshots -> {
+                List<String> tickers = new ArrayList<>();
+                for (QueryDocumentSnapshot doc : bargainSnapshots) {
+                    String ticker = doc.getString("ticker");
+                    if (ticker != null) {
+                        tickers.add(ticker);
+                    }
+                }
+
+                if (tickers.isEmpty()) {
+                    showError("אין מניות ב-Bargain Bin לסרוק!");
+                    layoutProgress.setVisibility(View.GONE);
+                    return;
+                }
+
+                int totalStocks = tickers.size();
+                progressBarHorizontal.setMax(totalStocks);
+                progressBarHorizontal.setProgress(0);
+                final int[] completed = {0};
+
+                StockApiService apiService = RetrofitClient.getApiService();
+
+                // 5. מריצים את ה-DCF *רק* על המניות ששלפנו מקודם
+                for (String ticker : tickers) {
+                    String url = "https://query2.finance.yahoo.com/v10/finance/quoteSummary/" + ticker +
+                            "?modules=defaultKeyStatistics,financialData,earningsTrend";
+
+                    apiService.getYahooSummary(url).enqueue(new Callback<YahooSummaryResponse>() {
+                        @Override
+                        public void onResponse(Call<YahooSummaryResponse> call, Response<YahooSummaryResponse> response) {
+                            completed[0]++;
+                            updateProgressUI(completed[0], totalStocks);
+
+                            if (response.isSuccessful() && response.body() != null) {
+                                try {
+                                    YahooSummaryResponse.Result result = response.body().getQuoteSummary().getResult().get(0);
+
+                                    double currentPrice = result.getFinancialData().getCurrentPrice().getRaw();
+                                    double shares = result.getDefaultKeyStatistics().getSharesOutstanding().getRaw();
+                                    double fcf = result.getFinancialData().getFreeCashflow().getRaw();
+
+                                    double discountRate;
+                                    if (customDiscount != null) {
+                                        discountRate = customDiscount;
+                                    } else {
+                                        double beta = (result.getDefaultKeyStatistics().getBeta() != null) ?
+                                                result.getDefaultKeyStatistics().getBeta().getRaw() : 1.0;
+                                        discountRate = (beta < 0.8) ? 0.08 : (beta > 1.3) ? 0.12 : 0.10;
+                                    }
+
+                                    double expectedGrowth;
+                                    if (customGrowth != null) {
+                                        expectedGrowth = customGrowth;
+                                    } else {
+                                        expectedGrowth = 0.05;
+                                        if (result.getEarningsTrend() != null) {
+                                            for (YahooSummaryResponse.Trend trend : result.getEarningsTrend().getTrend()) {
+                                                if ("+5y".equals(trend.getPeriod()) && trend.getGrowth() != null) {
+                                                    expectedGrowth = trend.getGrowth().getRaw();
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    double terminalGrowth = (customTerminal != null) ? customTerminal : 0.025;
+
+                                    double intrinsicValue = runDcfCalculation(fcf, shares, expectedGrowth, discountRate, terminalGrowth);
+
+                                    if (currentPrice < intrinsicValue) {
+                                        saveDcfBargainToFirebase(ticker, currentPrice, intrinsicValue, expectedGrowth);
+                                    }
+
+                                } catch (Exception e) {
+                                    Log.e("DCF_SCAN", "Error parsing " + ticker + ": " + e.getMessage());
+                                }
+                            }
+                        }
+
+                        @Override
+                        public void onFailure(Call<YahooSummaryResponse> call, Throwable t) {
+                            completed[0]++;
+                            updateProgressUI(completed[0], totalStocks);
+                        }
+                    });
+                }
+            }).addOnFailureListener(e -> {
+                showError("שגיאה בשליפת מניות מה-Bargain Bin: " + e.getMessage());
+                layoutProgress.setVisibility(View.GONE);
+            });
+        });
+    }
+    // פונקציית עזר לחישוב המתמטי
+    private double runDcfCalculation(double fcf, double shares, double growth, double discount, double terminal) {
+        double projectedFcf = fcf;
+        double pvSum = 0;
+        for (int i = 1; i <= 5; i++) {
+            projectedFcf *= (1 + growth);
+            pvSum += projectedFcf / Math.pow((1 + discount), i);
+        }
+        double terminalValue = (projectedFcf * (1 + terminal)) / (discount - terminal);
+        double pvTerminal = terminalValue / Math.pow((1 + discount), 5);
+        return (pvSum + pvTerminal) / shares;
+    }
+
+    // שמירה לאוסף נפרד ב-Firebase בשם "dcf_stocks"
+    private void saveDcfBargainToFirebase(String ticker, double price, double intrinsic, double growth) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("ticker", ticker);
+        data.put("currentPrice", price);
+        data.put("intrinsicValue", intrinsic);
+        data.put("expectedGrowth", growth * 100);
+        data.put("timestamp", System.currentTimeMillis());
+
+        db.collection("dcf_stocks").document(ticker).set(data);
     }
 
     private void checkQuotaAndFetch(String ticker, double growthRate, double discountRate, double terminalGrowth) {

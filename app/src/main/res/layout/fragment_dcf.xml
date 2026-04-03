@@ -118,6 +118,7 @@
 
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
+
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnCalculateDcf"
             android:layout_width="match_parent"
@@ -189,6 +190,60 @@
 
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="#D3D3D3"
+            android:layout_marginTop="24dp"
+            android:layout_marginBottom="16dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="DCF Scanned Bargains"
+            android:textStyle="bold"
+            android:textSize="18sp"
+            android:layout_marginBottom="12dp" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnScanDcfMarket"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="סרוק את כל השוק אוטומטית (DCF)"
+            app:icon="@drawable/ic_search" />
+
+        <LinearLayout
+            android:id="@+id/layoutProgress"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingVertical="16dp"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/tvProgressText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="סורק מניות: 0/0"
+                android:layout_gravity="center_horizontal"
+                android:textStyle="bold" />
+
+            <ProgressBar
+                android:id="@+id/progressBarHorizontal"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp" />
+        </LinearLayout>
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/rvDcfStocks"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:nestedScrollingEnabled="false"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="80dp"/>
 
     </LinearLayout>
 </ScrollView>
