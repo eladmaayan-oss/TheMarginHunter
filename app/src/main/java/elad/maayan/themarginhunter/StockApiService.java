@@ -33,19 +33,40 @@ public interface StockApiService {
             @Query("symbol") String symbol,     // הטיקר, למשל "AAPL"
             @Query("apikey") String apiKey      // המפתח שלך
     );
-    @GET("quote")
+//    @GET("quote")
+//    Call<FinnhubQuoteResponse> getStockQuote(
+//            @Query("symbol") String symbol,
+//            @Query("token") String apiKey
+//    );
+
+//    @GET("stock/metric")
+//    Call<FinnhubMetricResponse> getStockMetrics(
+//            @Query("symbol") String symbol,
+//            @Query("metric") String metricType, // אנחנו נעביר כאן "all"
+//            @Query("token") String apiKey
+//    );
+
+
+//    @GET("stock/profile2")
+//    Call<FinnhubProfileResponse> getCompanyProfile(
+//            @Query("symbol") String symbol,
+//            @Query("token") String apiKey
+//    );
+
+    @GET("https://finnhub.io/api/v1/quote")
     Call<FinnhubQuoteResponse> getStockQuote(
             @Query("symbol") String symbol,
             @Query("token") String apiKey
     );
 
-    @GET("stock/metric")
+    @GET("https://finnhub.io/api/v1/stock/metric")
     Call<FinnhubMetricResponse> getStockMetrics(
             @Query("symbol") String symbol,
             @Query("metric") String metricType, // אנחנו נעביר כאן "all"
             @Query("token") String apiKey
     );
-    @GET("stock/profile2")
+
+    @GET("https://finnhub.io/api/v1/stock/profile2")
     Call<FinnhubProfileResponse> getCompanyProfile(
             @Query("symbol") String symbol,
             @Query("token") String apiKey
@@ -54,4 +75,6 @@ public interface StockApiService {
     Call<YahooSummaryResponse> getYahooSummary(@Url String url);
     @GET
     Call<YahooChartResponse> getYahooChart(@Url String url);
+    @GET
+    Call<YahooBulkQuoteResponse> getYahooBulkQuotes(@Url String url);
 }

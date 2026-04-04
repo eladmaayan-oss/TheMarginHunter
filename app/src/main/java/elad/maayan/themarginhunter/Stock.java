@@ -81,6 +81,9 @@ public class Stock {
     public double getExpectedGrowth() {
         return expectedGrowth;
     }
+    public void setPrice(double price) {
+        this.currentPrice = price;
+    }
 
 
     @PropertyName("ticker")

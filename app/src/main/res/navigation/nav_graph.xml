@@ -48,8 +48,18 @@
     </fragment>
 
     <fragment
+        android:id="@+id/watchlistFragment"
+        android:name="elad.maayan.themarginhunter.WatchlistFragment"
+        android:label="Watchlist">
+
+        <action
+            android:id="@+id/action_watchlist_to_addStock"
+            app:destination="@id/addStockFragment" />
+    </fragment>
+
+    <dialog
         android:id="@+id/addStockFragment"
         android:name="elad.maayan.themarginhunter.AddStockFragment"
-        android:label="AddStockFragment" />
+        android:label="Add Stock" />
 
 </navigation>

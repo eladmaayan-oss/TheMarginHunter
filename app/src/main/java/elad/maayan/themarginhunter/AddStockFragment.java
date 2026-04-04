@@ -155,16 +155,18 @@ public class AddStockFragment extends BottomSheetDialogFragment {
             }
         });
     }
+
     private void handleArguments(View view) {
         if (getArguments() != null) {
             String tickerArg = getArguments().getString("ticker");
-            if (tickerArg != null) {
+            if (tickerArg != null && !tickerArg.isEmpty()) {
                 etTicker.setText(tickerArg);
-                if (btnSave.getText().toString().equals("Update Stock")) {
-                    setupEditMode(tickerArg);
-                } else {
-                    view.post(() -> btnFetch.performClick());
-                }
+
+                // מעבר למצב צפייה (נעילת השדה והעלמת הכפתורים)
+                setupEditMode(tickerArg);
+
+                // במקום ללחוץ על הכפתור המוסתר, נקרא לפונקציית המשיכה ישירות
+                view.post(() -> performSmartFetch());
             }
         }
     }
@@ -205,39 +207,31 @@ public class AddStockFragment extends BottomSheetDialogFragment {
     private void fetchStockData(String ticker) {
         StockApiService api = RetrofitClient.getApiService();
 
-        // 1. קריאת שם החברה
-        api.getCompanyProfile(ticker, API_KEY).enqueue(new Callback<FinnhubProfileResponse>() {
+        // 1. שימוש ביאהו למשיכת מחיר ושם חברה (קריאה אחת יציבה)
+        String yahooUrl = "https://query1.finance.yahoo.com/v7/finance/quote?symbols=" + ticker;
+        api.getYahooBulkQuotes(yahooUrl).enqueue(new Callback<YahooBulkQuoteResponse>() {
             @Override
-            public void onResponse(Call<FinnhubProfileResponse> call, Response<FinnhubProfileResponse> response) {
-                if (response.isSuccessful() && response.body() != null && response.body().getCompanyName() != null) {
-                    String companyName = response.body().getCompanyName();
-                    if(getActivity() != null) {
-                        getActivity().runOnUiThread(() -> etCompanyName.setText(companyName));
+            public void onResponse(Call<YahooBulkQuoteResponse> call, Response<YahooBulkQuoteResponse> response) {
+                if (response.isSuccessful() && response.body() != null && response.body().getQuoteResponse().getResult() != null) {
+                    YahooBulkQuoteResponse.Quote quote = response.body().getQuoteResponse().getResult().get(0);
+
+                    if (getActivity() != null) {
+                        getActivity().runOnUiThread(() -> {
+                            etCompanyName.setText(quote.getCompanyName());
+                            etPrice.setText(String.valueOf(quote.getRegularMarketPrice()));
+                            updateIntrinsicValueRealTime();
+                        });
                     }
                 }
             }
             @Override
-            public void onFailure(Call<FinnhubProfileResponse> call, Throwable t) {}
-        });
-
-        // 2. קריאת המחיר הנוכחי
-        api.getStockQuote(ticker, API_KEY).enqueue(new Callback<FinnhubQuoteResponse>() {
-            @Override
-            public void onResponse(Call<FinnhubQuoteResponse> call, Response<FinnhubQuoteResponse> response) {
-                if (response.isSuccessful() && response.body() != null) {
-                    double currentPrice = response.body().getCurrentPrice();
-                    if(getActivity() != null) {
-                        getActivity().runOnUiThread(() -> etPrice.setText(String.valueOf(currentPrice)));
-                    }
-                }
-            }
-            @Override
-            public void onFailure(Call<FinnhubQuoteResponse> call, Throwable t) {
-                Log.e("API_ERROR", "Failed to fetch quote");
+            public void onFailure(Call<YahooBulkQuoteResponse> call, Throwable t) {
+                Log.e("YAHOO_ERROR", "Failed to fetch price and name");
             }
         });
 
-        // 3. קריאת הנתונים הפיננסיים (EPS ו-Growth)
+        // 2. קריאת הנתונים הפיננסיים מ-Finnhub (קריאה בודדת בלבד - לא תיחסם)
+// 2. קריאת הנתונים הפיננסיים מ-Finnhub
         api.getStockMetrics(ticker, "all", API_KEY).enqueue(new Callback<FinnhubMetricResponse>() {
             @Override
             public void onResponse(Call<FinnhubMetricResponse> call, Response<FinnhubMetricResponse> response) {
@@ -245,6 +239,7 @@ public class AddStockFragment extends BottomSheetDialogFragment {
                     double eps = response.body().getMetric().getEps();
                     double growth = response.body().getMetric().getGrowth();
                     currentDividendYield = response.body().getMetric().getDividendYield();
+
                     if(getActivity() != null) {
                         getActivity().runOnUiThread(() -> {
                             etEPS.setText(String.valueOf(eps));
@@ -252,15 +247,29 @@ public class AddStockFragment extends BottomSheetDialogFragment {
                             updateIntrinsicValueRealTime();
                         });
                     }
+                } else {
+                    // תפיסת השגיאה השקטה והצגתה למשתמש
+                    if(getActivity() != null) {
+                        getActivity().runOnUiThread(() -> {
+                            Toast.makeText(getContext(), "שגיאת Finnhub: קוד " + response.code(), Toast.LENGTH_LONG).show();
+                        });
+                    }
                 }
             }
-            @Override
-            public void onFailure(Call<FinnhubMetricResponse> call, Throwable t) {}
-        });
 
-        currentTicker = ticker; // שמירת המניה הנוכחית
-        fetchYahooChartDynamic(ticker, "1mo", "1d", "dd/MM"); // קריאה ראשונית של חודש
+            @Override
+            public void onFailure(Call<FinnhubMetricResponse> call, Throwable t) {
+                // תפיסת שגיאות רשת ברמת המכשיר
+                if(getActivity() != null) {
+                    getActivity().runOnUiThread(() -> {
+                            Toast.makeText(getContext(), "שגיאת רשת Finnhub: " + t.getMessage(), Toast.LENGTH_LONG).show();
+                    });
+                }
             }
+        });
+        currentTicker = ticker;
+        fetchYahooChartDynamic(ticker, "1mo", "1d", "dd/MM");
+    }
 
     private void drawChart(List<Double> closePrices, String dateFormat) {
         lineChart.setVisibility(View.VISIBLE);
@@ -310,6 +319,7 @@ public class AddStockFragment extends BottomSheetDialogFragment {
         lineChart.animateX(1000);
         lineChart.invalidate();
     }
+
     private void updateIntrinsicValueRealTime() {
         try {
             String epsS = etEPS.getText().toString();
@@ -390,9 +400,16 @@ public class AddStockFragment extends BottomSheetDialogFragment {
 
         updateIntrinsicValueRealTime();
     }
+
     private void setupEditMode(String ticker) {
-        etTicker.setEnabled(false);
-        btnSave.setText("Update Stock");
+        etTicker.setEnabled(false); // נועל את שדה הטיקר
+
+        // מעלים לחלוטין את כפתור השמירה
+        btnSave.setVisibility(View.GONE);
+
+        // מעלים לחלוטין את כפתור משיכת הנתונים
+        btnFetch.setVisibility(View.GONE);
+
         db.collection("stocks").document(ticker).get().addOnSuccessListener(doc -> {
             if (doc.exists()) fillFieldsFromFirebase(doc.toObject(Stock.class));
         });
