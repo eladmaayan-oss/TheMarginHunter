@@ -1,11 +1,16 @@
 package elad.maayan.themarginhunter;
 
+import android.Manifest;
+import android.content.pm.PackageManager;
+import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
 import android.widget.Toast;
 
 import androidx.activity.EdgeToEdge;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
 import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
@@ -13,97 +18,132 @@ import androidx.navigation.NavController;
 import androidx.navigation.fragment.NavHostFragment;
 import androidx.navigation.ui.NavigationUI;
 import androidx.work.Constraints;
+import androidx.work.Data;
 import androidx.work.ExistingPeriodicWorkPolicy;
 import androidx.work.NetworkType;
 import androidx.work.PeriodicWorkRequest;
 import androidx.work.WorkManager;
 
 import com.google.android.material.bottomnavigation.BottomNavigationView;
+import com.google.firebase.firestore.FirebaseFirestore;
 
 import java.util.concurrent.TimeUnit;
 
 public class MainActivity extends AppCompatActivity {
+
+    private static final int NOTIFICATION_PERMISSION_CODE = 100;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         EdgeToEdge.enable(this);
         setContentView(R.layout.activity_main);
-// בדיקה אם הגענו מהתראה
-        if (getIntent() != null && getIntent().hasExtra("open_ticker")) {
-            String ticker = getIntent().getStringExtra("open_ticker");
-            Toast.makeText(this, "בודק את המניה: " + ticker, Toast.LENGTH_LONG).show();
+//        seedDatabase();
 
-            NavHostFragment navHostFragment = (NavHostFragment) getSupportFragmentManager()
-                    .findFragmentById(R.id.nav_host_fragment);
+        // 1. בקשת הרשאת התראות (חובה לאנדרואיד 13 ומעלה)
+        checkNotificationPermission();
 
-            if (navHostFragment != null) {
-                NavController navController = navHostFragment.getNavController();
-
-                // יצירת Bundle עם הנתונים למסך הבא
-                Bundle bundle = new Bundle();
-                bundle.putString("ticker", ticker);
-
-                // ניווט למסך הוספה/עריכה (או מסך פרטים אם קיים)
-                // השתמש ב-ID של ה-Action שיש לך ב-nav_graph.xml
-                navController.navigate(R.id.action_global_addStockFragment, bundle);
-
-                Log.d("NAV", "Navigated to details for: " + ticker);
-            }
-            // כאן תוכל להוסיף לוגיקה של ניווט (Navigation) למסך פירוט המניה אם תרצה
-        }
-        setupBackgroundWork();
-        // טיפול ב-Padding של המערכת (סטטוס בר וכדומה)
+        // 2. טיפול ב-Padding של המערכת
         ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.main), (v, insets) -> {
             Insets systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars());
             v.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom);
             return insets;
         });
 
-        // הגדרת הניווט
+        // 3. הגדרת הניווט (Bottom Navigation)
         BottomNavigationView bottomNav = findViewById(R.id.bottom_navigation);
-
         NavHostFragment navHostFragment = (NavHostFragment) getSupportFragmentManager()
                 .findFragmentById(R.id.nav_host_fragment);
 
         if (navHostFragment != null) {
             NavController navController = navHostFragment.getNavController();
-            // חיבור ה-BottomNav ל-Navigation Components
             NavigationUI.setupWithNavController(bottomNav, navController);
-        }
-        PeriodicWorkRequest priceCheckRequest =
-                new PeriodicWorkRequest.Builder(PriceCheckWorker.class, 12, TimeUnit.HOURS)
-                        .setConstraints(new Constraints.Builder()
-                                .setRequiredNetworkType(NetworkType.CONNECTED) // רק כשיש אינטרנט
-                                .build())
-                        .build();
 
-        WorkManager.getInstance(this).enqueueUniquePeriodicWork(
-                "StockPriceCheck",
-                ExistingPeriodicWorkPolicy.KEEP, // אל תתחיל מחדש אם כבר יש תור
-                priceCheckRequest
-        );
+            // 4. בדיקה אם הגענו מהתראה (רק אחרי שהניווט מוכן)
+            if (getIntent() != null && getIntent().hasExtra("open_ticker")) {
+                String ticker = getIntent().getStringExtra("open_ticker");
+                Toast.makeText(this, "בודק את המניה: " + ticker, Toast.LENGTH_LONG).show();
+
+                Bundle bundle = new Bundle();
+                bundle.putString("ticker", ticker); // שים לב לאותיות קטנות כדי שיתאים למה שתיקנו קודם!
+                navController.navigate(R.id.action_global_addStockFragment, bundle);
+
+                Log.d("NAV", "Navigated to details for: " + ticker);
+            }
+        }
+
+        // 5. הפעלת משימות הרקע
+        setupBackgroundWork();
     }
+
+    private void checkNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.POST_NOTIFICATIONS}, NOTIFICATION_PERMISSION_CODE);
+            }
+        }
+    }
+
     private void setupBackgroundWork() {
-        // הגדרת אילוצים: רק כשיש אינטרנט והסוללה לא במצב חיסכון קיצוני
         Constraints constraints = new Constraints.Builder()
                 .setRequiredNetworkType(NetworkType.CONNECTED)
+                .setRequiresBatteryNotLow(true)
                 .build();
 
-        // יצירת בקשת עבודה מחזורית (כל 12 שעות)
+        // עבודה 1: בדיקת מחירים מהירה כל 12 שעות
+        Data fastCheckData = new Data.Builder()
+                .putBoolean("is_full_refresh", false)
+                .build();
+
         PeriodicWorkRequest priceCheckRequest =
-                new PeriodicWorkRequest.Builder(PriceCheckWorker.class, 12, TimeUnit.HOURS)
+                new PeriodicWorkRequest.Builder(SmartStockWorker.class, 12, TimeUnit.HOURS)
                         .setConstraints(constraints)
-                        .setInitialDelay(1, TimeUnit.HOURS) // התחלה ראשונה רק עוד שעה (לא ישר בפתיחה)
+                        .setInputData(fastCheckData)
+                        .setInitialDelay(1, TimeUnit.HOURS) // אל תרוץ מיד בפתיחת האפליקציה
                         .build();
 
-        // רישום העבודה במערכת (KEEP אומר שאם כבר קיימת עבודה כזו, אל תדרוס אותה)
         WorkManager.getInstance(this).enqueueUniquePeriodicWork(
                 "StockPriceCheckWork",
-                ExistingPeriodicWorkPolicy.KEEP,
+                ExistingPeriodicWorkPolicy.REPLACE,
                 priceCheckRequest
         );
 
-        Log.d("WORK_MANAGER", "Background work scheduled successfully.");
+        // עבודה 2: עדכון נתונים פיננסיים מלא (EPS וכו') פעם ב-7 ימים
+        Data fullRefreshData = new Data.Builder()
+                .putBoolean("is_full_refresh", true)
+                .build();
+
+        PeriodicWorkRequest weeklyRefreshRequest =
+                new PeriodicWorkRequest.Builder(SmartStockWorker.class, 7, TimeUnit.DAYS)
+                        .setConstraints(constraints)
+                        .setInputData(fullRefreshData)
+                        .build();
+
+        WorkManager.getInstance(this).enqueueUniquePeriodicWork(
+                "WeeklyStockUpdate",
+                ExistingPeriodicWorkPolicy.KEEP,
+                weeklyRefreshRequest
+        );
+
+        Log.d("WORK_MANAGER", "Smart Background tasks scheduled successfully.");
     }
+
+//    private void seedDatabase() {
+//        FirebaseFirestore db = FirebaseFirestore.getInstance();
+//        // בדיקה אם האוסף ריק
+//        db.collection("stocks").limit(1).get().addOnSuccessListener(snapshot -> {
+//            if (snapshot.isEmpty()) {
+//                // רשימת המניות הראשונית שלך
+//                String[] initialStocks = {"AAPL", "GOOGL", "MSFT", "TSLA", "NVDA"};
+//                for (String ticker : initialStocks) {
+//                    Stock s = new Stock();
+//                    s.setTicker(ticker);
+//                    s.setCompanyName("Loading...");
+//                    db.collection("stocks").document(ticker).set(s);
+//                }
+//                Toast.makeText(this, "מאתחל נתונים ראשוניים...", Toast.LENGTH_SHORT).show();
+//            }
+//        });
+//    }
+
 }

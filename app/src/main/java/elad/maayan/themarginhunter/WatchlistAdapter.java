@@ -43,10 +43,10 @@ public class WatchlistAdapter extends RecyclerView.Adapter<WatchlistAdapter.View
         Stock stock = stocks.get(position);
         holder.tvTicker.setText(stock.getTicker());
 
-        if (stock.getPrice() == 0.0) {
+        if (stock.getCurrentPrice() == 0.0) {
             holder.tvPrice.setText("טוען...");
         } else {
-            holder.tvPrice.setText(String.format(Locale.US, "$%.2f", stock.getPrice()));
+            holder.tvPrice.setText(String.format(Locale.US, "$%.2f", stock.getCurrentPrice()));
         }
 
         // 3. הוספת מאזין ללחיצה על כל השורה

@@ -8,6 +8,8 @@ import androidx.navigation.Navigation;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -15,7 +17,6 @@ import android.view.ViewGroup;
 import android.widget.ProgressBar;
 import android.widget.Toast;
 
-import com.google.android.material.floatingactionbutton.FloatingActionButton;
 import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.QueryDocumentSnapshot;
 
@@ -32,7 +33,7 @@ import retrofit2.Response;
  * Use the {@link BargainsFragment#newInstance} factory method to
  * create an instance of this fragment.
  */
-public class BargainsFragment extends Fragment implements StockAdapterListener {
+public class BargainsFragment extends Fragment {
 
     private RecyclerView rvBargains;
     private ProgressBar progressBar;
@@ -43,6 +44,12 @@ public class BargainsFragment extends Fragment implements StockAdapterListener {
     private View layoutProgress;
     private ProgressBar progressBarHorizontal;
     private android.widget.TextView tvProgressText;
+    private float currentBasePE = 8.5f;
+    private float currentGrowthMult = 2.0f;
+    private android.content.SharedPreferences prefs;
+    private int currentScanIndex = 0;
+    private Handler scanHandler = new Handler(Looper.getMainLooper());
+    private List<String> tickersToScan = new ArrayList<>();
 
     // TODO: Rename parameter arguments, choose names that match
     // the fragment initialization parameters, e.g. ARG_ITEM_NUMBER
@@ -57,76 +64,49 @@ public class BargainsFragment extends Fragment implements StockAdapterListener {
         // Required empty public constructor
     }
 
-    private void scanMarketForBargains() {
-        List<String> tickers = StockUniverse.getTopStocks();
-        StockApiService apiService = RetrofitClient.getApiService();
-        int totalStocks = tickers.size();
+    private void startSmartScanner(List<Stock> list) {
+        this.bargainStocksList = list;
+        this.currentScanIndex = 0;
+        processNextTicker();
+    }
 
-        // 1. מדליקים רק את הפס ההתקדמות החדש
+    private void processNextTicker() {
+        if (getContext() == null || currentScanIndex >= tickersToScan.size()) {
+            layoutProgress.setVisibility(View.GONE);
+            Toast.makeText(getContext(), "סריקת השוק הסתיימה בהצלחה!", Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        String ticker = tickersToScan.get(currentScanIndex);
+
+        // עדכון ה-UI
+        updateProgressUI(currentScanIndex + 1, tickersToScan.size());
+
+        // ביצוע הקריאה ליאהו עבור המניה הנוכחית בלבד
+        fetchDataFromServer(ticker);
+
+        currentScanIndex++;
+
+        // כאן הקסם: במקום לרוץ למניה הבאה מיד, מחכים 1500 מילישניות (שנייה וחצי)
+        scanHandler.postDelayed(this::processNextTicker, 1500);
+    }
+
+    private void scanMarketForBargains() {
+        // טעינת רשימת הטיקרים מהיקום (ה-64 מניות)
+        tickersToScan = StockUniverse.getTopStocks();
+        int totalStocks = tickersToScan.size();
+
+        // איפוס ממשק המשתמש (Progress Bar)
         layoutProgress.setVisibility(View.VISIBLE);
         progressBarHorizontal.setMax(totalStocks);
         progressBarHorizontal.setProgress(0);
-        tvProgressText.setText("סורק מניות: 0 / " + totalStocks);
+        tvProgressText.setText("מכין סריקה...");
 
-        final int[] completedCalls = {0};
+        currentScanIndex = 0;
 
-        for (String ticker : tickers) {
-            String url = "https://query2.finance.yahoo.com/v10/finance/quoteSummary/" + ticker + "?modules=defaultKeyStatistics,financialData";
-
-            apiService.getYahooSummary(url).enqueue(new Callback<YahooSummaryResponse>() {
-                @Override
-                public void onResponse(Call<YahooSummaryResponse> call, Response<YahooSummaryResponse> response) {
-                    completedCalls[0]++;
-
-                    // 2. קוראים לפונקציה שמעדכנת את המספרים במסך!
-                    updateProgressUI(completedCalls[0], totalStocks);
-
-                    if (response.isSuccessful() && response.body() != null) {
-                        try {
-                            YahooSummaryResponse.Result result = response.body().getQuoteSummary().getResult().get(0);
-
-                            double currentPrice = result.getFinancialData().getCurrentPrice().getRaw();
-                            double eps = result.getDefaultKeyStatistics().getTrailingEps().getRaw();
-
-                            double growthRate = 5.0;
-                            double intrinsicValue = eps * (8.5 + 2 * growthRate);
-                            double marginOfSafetyPrice = intrinsicValue * 0.90;
-
-                            if (currentPrice < marginOfSafetyPrice) {
-                                Log.d("BARGAIN_HUNTER", "מצאנו מציאה! " + ticker);
-
-                                // חישוב מרווח הביטחון באחוזים
-                                double marginOfSafetyPct = ((intrinsicValue - currentPrice) / intrinsicValue) * 100;
-
-                                Stock newBargain = new Stock();
-                                newBargain.setTicker(ticker);
-                                newBargain.setCurrentPrice(currentPrice);
-                                newBargain.setIntrinsicValue(intrinsicValue);
-
-                                // השורה שהוספנו: שמירת מרווח הביטחון באובייקט לפני השליחה ל-Firebase
-                                newBargain.setMarginOfSafety(marginOfSafetyPct);
-
-                                db.collection("stocks").document(ticker)
-                                        .set(newBargain)
-                                        .addOnSuccessListener(aVoid -> Log.d("BARGAIN_HUNTER", ticker + " נשמרה ב-Firebase!"));
-                            }
-                        } catch (Exception e) {
-                            Log.e("BARGAIN_HUNTER", "חסרים נתונים או שגיאת פרסור עבור " + ticker);
-                        }
-                    }
-                }
-
-                @Override
-                public void onFailure(Call<YahooSummaryResponse> call, Throwable t) {
-                    completedCalls[0]++;
-
-                    // גם אם יש שגיאת רשת במניה מסוימת, נקדם את הבר
-                    updateProgressUI(completedCalls[0], totalStocks);
-                }
-            });
-        }
+        // התחלת התהליך הסדרתי
+        processNextTicker();
     }
-
     // 3. פונקציית העזר שחייבת להיות כאן כדי לעדכן את התצוגה ולסגור אותה בסוף
     private void updateProgressUI(int current, int total) {
         progressBarHorizontal.setProgress(current);
@@ -156,6 +136,30 @@ public class BargainsFragment extends Fragment implements StockAdapterListener {
         return fragment;
     }
 
+    private void fetchDataFromServer(String ticker) {
+        StockApiService apiService = RetrofitClient.getApiService();
+        String url = "https://query2.finance.yahoo.com/v10/finance/quoteSummary/" + ticker + "?modules=defaultKeyStatistics,financialData";
+
+        apiService.getYahooSummary(url).enqueue(new Callback<YahooSummaryResponse>() {
+            @Override
+            public void onResponse(Call<YahooSummaryResponse> call, Response<YahooSummaryResponse> response) {
+                if (response.isSuccessful() && response.body() != null) {
+                    try {
+                        // הלוגיקה הקיימת שלך לחישוב שווי פנימי ושמירה
+                        processYahooResponse(ticker, response.body());
+                    } catch (Exception e) {
+                        Log.e("BARGAIN_HUNTER", "שגיאה בעיבוד נתונים עבור: " + ticker);
+                    }
+                }
+            }
+
+            @Override
+            public void onFailure(Call<YahooSummaryResponse> call, Throwable t) {
+                Log.e("BARGAIN_HUNTER", "נכשל במשיכת נתונים עבור: " + ticker);
+            }
+        });
+    }
+
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -172,20 +176,29 @@ public class BargainsFragment extends Fragment implements StockAdapterListener {
         rvBargains = view.findViewById(R.id.rvBargains);
         layoutProgress = view.findViewById(R.id.layoutProgress);
         progressBarHorizontal = view.findViewById(R.id.progressBarHorizontal);
-        tvProgressText = view.findViewById(R.id.tvProgressText);        layoutEmpty = view.findViewById(R.id.layoutEmpty);
-        adapter = new StockAdapter(bargainStocksList, this);
-        FloatingActionButton fabAdd = view.findViewById(R.id.fabAddStock);
+        tvProgressText = view.findViewById(R.id.tvProgressText);
+        layoutEmpty = view.findViewById(R.id.layoutEmpty);
+        adapter = new StockAdapter(bargainStocksList, new StockAdapterListener() {
+            @Override
+            public void onDeleteClicked(Stock stock) {
+                db.collection("bargain_stocks").document(stock.getTicker()).delete()
+                        .addOnSuccessListener(aVoid -> Toast.makeText(getContext(), "המניה נמחקה מרשימת המציאות", Toast.LENGTH_SHORT).show());
+            }
 
-        fabAdd.setOnClickListener(v -> {
-            // 1. הוסף את השורה הזו כדי לבדוק ב-Logcat
-            Log.d("NAV_CHECK", "FAB was clicked!");
+            @Override
+            public void onEditClicked(Stock stock) {
+                Toast.makeText(getContext(), "עריכה לא זמינה במסך זה", Toast.LENGTH_SHORT).show();
+            }
 
-            try {
-                // 2. פקודת הניווט
-                Navigation.findNavController(v).navigate(R.id.action_nav_bargains_to_addStockFragment);
-            } catch (Exception e) {
-                // 3. אם יש שגיאה בניווט, נראה אותה כאן
-                Log.e("NAV_CHECK", "Navigation failed: " + e.getMessage());
+            @Override
+            public void onStockClicked(Stock stock) {
+
+                AddStockFragment addStockFragment = new AddStockFragment();
+                Bundle args = new Bundle();
+                args.putString("ticker", stock.getTicker());
+                addStockFragment.setArguments(args);
+                addStockFragment.show(getChildFragmentManager(), "AddStockBottomSheet");
+
             }
         });
 
@@ -204,6 +217,12 @@ public class BargainsFragment extends Fragment implements StockAdapterListener {
             layoutEmpty.setVisibility(View.GONE);
             rvBargains.setVisibility(View.VISIBLE);
         }
+        prefs = requireActivity().getSharedPreferences("GrahamPrefs", android.content.Context.MODE_PRIVATE);
+        currentBasePE = prefs.getFloat("basePE", 8.5f);
+        currentGrowthMult = prefs.getFloat("growthMult", 2.0f);
+        android.widget.ImageButton btnFinetune = view.findViewById(R.id.btnFinetuneSettings);
+        btnFinetune.setOnClickListener(v -> showFinetuneDialog());
+
 // מציאת סרגל הכלים שהוספנו ל-XML
         com.google.android.material.appbar.MaterialToolbar toolbar = view.findViewById(R.id.topAppBar);
 
@@ -278,28 +297,98 @@ public class BargainsFragment extends Fragment implements StockAdapterListener {
         }
     }
 
-    @Override
-    public void onDeleteClicked(Stock stock) {
-        new AlertDialog.Builder(getContext())
-                .setTitle("Delete Stock?")
-                .setMessage("Are you sure you want to remove " + stock.getTicker() + "?")
-                .setPositiveButton("Yes", (dialog, which) -> {
-                    // 2. מחק מ-Firestore
-                    db.collection("stocks").document(stock.getTicker())
-                            .delete()
-                            .addOnSuccessListener(aVoid -> {
-                                Toast.makeText(getContext(), "Deleted!", Toast.LENGTH_SHORT).show();
-                                // אין צורך לעדכן ידנית את הרשימה, ה snapshotListener יעשה את זה
-                            });
-                })
-                .setNegativeButton("No", null)
-                .show();
+    private void processYahooResponse(String ticker, YahooSummaryResponse responseBody) {
+        YahooSummaryResponse.Result result = responseBody.getQuoteSummary().getResult().get(0);
+
+        double currentPrice = result.getFinancialData().getCurrentPrice().getRaw();
+        double eps = result.getDefaultKeyStatistics().getTrailingEps().getRaw();
+
+        double growthRate = 5.0; // ניתן לשכלל בעתיד
+        double intrinsicValue = eps * (currentBasePE + currentGrowthMult * growthRate);
+        double marginOfSafetyPrice = intrinsicValue * 0.90;
+
+        if (currentPrice < marginOfSafetyPrice) {
+            double marginOfSafetyPct = ((intrinsicValue - currentPrice) / intrinsicValue) * 100;
+
+            Stock newBargain = new Stock();
+            newBargain.setTicker(ticker);
+            newBargain.setCurrentPrice(currentPrice);
+            newBargain.setIntrinsicValue(intrinsicValue);
+            newBargain.setMarginOfSafety(marginOfSafetyPct);
+            newBargain.setLastCalculated(System.currentTimeMillis()); // הוספת זמן עדכון
+
+            // שמירה ל-Firebase
+            db.collection("stocks").document(ticker).set(newBargain);
+        }
     }
 
-    @Override
-    public void onEditClicked(Stock stock) {
-        Bundle bundle = new Bundle();
-        bundle.putString("ticker", stock.getTicker());
-        Navigation.findNavController(getView()).navigate(R.id.action_global_addStockFragment, bundle);
+    private void showFinetuneDialog() {
+        android.app.AlertDialog.Builder builder = new android.app.AlertDialog.Builder(requireContext());
+        View dialogView = getLayoutInflater().inflate(R.layout.dialog_finetune, null);
+        builder.setView(dialogView);
+
+        android.app.AlertDialog dialog = builder.create();
+        dialog.getWindow().setBackgroundDrawableResource(android.R.color.transparent);
+
+        com.google.android.material.slider.Slider sliderBasePE = dialogView.findViewById(R.id.sliderBasePE);
+        com.google.android.material.slider.Slider sliderGrowthMult = dialogView.findViewById(R.id.sliderGrowthMult);
+        android.widget.TextView tvBasePEValue = dialogView.findViewById(R.id.tvBasePEValue);
+        android.widget.TextView tvGrowthMultValue = dialogView.findViewById(R.id.tvGrowthMultValue);
+        android.widget.Button btnReset = dialogView.findViewById(R.id.btnReset);
+        android.widget.Button btnSave = dialogView.findViewById(R.id.btnSaveFinetune);
+
+        // עדכון ערכים התחלתיים מהזיכרון
+        sliderBasePE.setValue(currentBasePE);
+        sliderGrowthMult.setValue(currentGrowthMult);
+        updateValueBox(tvBasePEValue, currentBasePE, 8.5f);
+        updateValueBox(tvGrowthMultValue, currentGrowthMult, 2.0f);
+
+        // מאזינים להזזת הסליידרים
+        sliderBasePE.addOnChangeListener((slider, value, fromUser) -> {
+            updateValueBox(tvBasePEValue, value, 8.5f);
+        });
+
+        sliderGrowthMult.addOnChangeListener((slider, value, fromUser) -> {
+            updateValueBox(tvGrowthMultValue, value, 2.0f);
+        });
+
+        // כפתור איפוס לגראהם מקורי
+        btnReset.setOnClickListener(v -> {
+            sliderBasePE.setValue(8.5f);
+            sliderGrowthMult.setValue(2.0f);
+        });
+
+        // כפתור שמירה
+        btnSave.setOnClickListener(v -> {
+            currentBasePE = sliderBasePE.getValue();
+            currentGrowthMult = sliderGrowthMult.getValue();
+
+            // שמירה ב-SharedPreferences כדי שיישאר גם מחר
+            prefs.edit()
+                    .putFloat("basePE", currentBasePE)
+                    .putFloat("growthMult", currentGrowthMult)
+                    .apply();
+
+            dialog.dismiss();
+
+            // מפעיל סריקה מחדש אוטומטית עם הפרמטרים החדשים
+            Toast.makeText(getContext(), "הפרמטרים עודכנו! מתחיל סריקה...", Toast.LENGTH_SHORT).show();
+            scanMarketForBargains();
+        });
+
+        dialog.show();
+    }
+
+    // פונקציית עזר שצובעת את הריבוע בירוק אם אנחנו על ערכי גראהם המקוריים
+    private void updateValueBox(android.widget.TextView tv, float currentValue, float grahamOriginal) {
+        tv.setText(String.format(java.util.Locale.US, "%.1f", currentValue));
+
+        if (Math.abs(currentValue - grahamOriginal) < 0.01f) {
+            // אם זה הערך המקורי - צבע טקסט ירוק
+            tv.setTextColor(android.graphics.Color.parseColor("#2E7D32"));
+        } else {
+            // אם הוזז - צבע שחור רגיל
+            tv.setTextColor(android.graphics.Color.BLACK);
+        }
     }
 }

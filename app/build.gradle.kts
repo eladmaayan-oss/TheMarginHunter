@@ -55,6 +55,8 @@ dependencies {
     // Navigation (גרסאות Java רגילות)
     implementation(libs.androidx.navigation.fragment)
     implementation(libs.androidx.navigation.ui)
+    implementation(libs.androidx.navigation.fragment.ktx)
+    implementation(libs.androidx.navigation.ui.ktx)
 
     // טסטים
     testImplementation(libs.junit)

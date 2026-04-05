@@ -7,6 +7,17 @@ import com.google.firebase.firestore.PropertyName;
 import java.util.List;
 
 public class Stock {
+
+    private String sector = "כללי"; // מגזר ברירת המחדל
+
+    public String getSector() {
+        return sector;
+    }
+
+    public void setSector(String sector) {
+        this.sector = sector;
+    }
+
     @PropertyName("fcf")
     private String fcf;
     @PropertyName("sharesOutstanding")
@@ -202,17 +213,28 @@ public class Stock {
         this.growthRate = growthRate;
     }
 
+    // שדות חסרים שגרמו לשגיאה:
+    @PropertyName("chartPrices")
+    private List<Double> chartPrices;
+
+    @PropertyName("lastCalculated")
+    private long lastCalculated;
+
+    // Getters & Setters לשדות החדשים (חשוב מאוד!)
+    @PropertyName("chartPrices")
+    public List<Double> getChartPrices() { return chartPrices; }
+
+    @PropertyName("chartPrices")
+    public void setChartPrices(List<Double> chartPrices) { this.chartPrices = chartPrices; }
+
+    @PropertyName("lastCalculated")
+    public long getLastCalculated() { return lastCalculated; }
+
+    @PropertyName("lastCalculated")
+    public void setLastCalculated(long lastCalculated) { this.lastCalculated = lastCalculated; }
     @Exclude
     public double calculateMarginOfSafetyLogic() {
         if (intrinsicValue <= 0 || currentPrice <= 0) return 0;
         return ((intrinsicValue - currentPrice) / intrinsicValue) * 100;
-    }
-
-    public String getName() {
-        return companyName;
-    }
-
-    public double getPrice() {
-        return currentPrice;
     }
 }

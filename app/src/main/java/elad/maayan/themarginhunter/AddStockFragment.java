@@ -377,8 +377,15 @@ public class AddStockFragment extends BottomSheetDialogFragment {
             data.put("dividendYield", currentDividendYield);
 
             db.collection("stocks").document(ticker).set(data, SetOptions.merge()).addOnSuccessListener(aVoid -> {
-                if (isAdded())
-                    Navigation.findNavController(requireActivity(), R.id.nav_host_fragment).popBackStack();
+                if (isAdded()) {
+                    // התיקון כאן: משתמשים ב-dismiss במקום ב-NavController
+                    dismiss();
+                    Toast.makeText(getContext(), "המניה נוספה בהצלחה!", Toast.LENGTH_SHORT).show();
+                }
+            }).addOnFailureListener(e -> {
+                if (isAdded()) {
+                    Toast.makeText(getContext(), "שגיאה בשמירה: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+                }
             });
         } catch (Exception e) {
             Toast.makeText(getContext(), "שגיאה בפורמט המספרים", Toast.LENGTH_SHORT).show();
@@ -386,8 +393,8 @@ public class AddStockFragment extends BottomSheetDialogFragment {
     }
 
     private void fillFieldsFromFirebase(Stock stock) {
-        etCompanyName.setText(stock.getName());
-        etPrice.setText(String.valueOf(stock.getPrice()));
+        etCompanyName.setText(stock.getCompanyName());
+        etPrice.setText(String.valueOf(stock.getCurrentPrice()));
         etEPS.setText(String.valueOf(stock.getEps()));
         etGrowth.setText(String.valueOf(stock.getGrowthRate()));
 

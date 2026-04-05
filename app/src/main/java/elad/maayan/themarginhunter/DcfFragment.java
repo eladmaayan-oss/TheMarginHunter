@@ -11,6 +11,7 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
+import android.widget.ImageButton;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -39,7 +40,6 @@ import retrofit2.Callback;
 import retrofit2.Response;
 
 public class DcfFragment extends Fragment {
-//    private static final String API_KEY = "BH00QGEFNFNZ1IDN";
     private static final String API_KEY = "7IGGZ2PPMOUAVS98";
 
 
@@ -51,12 +51,17 @@ public class DcfFragment extends Fragment {
     private ProgressBar progressBar;
     private MaterialCardView cardResult;
     private TextView tvIntrinsicValue, tvCurrentPrice, tvConclusion;
-    private static final int DAILY_LIMIT = 25;
-    private int apiRequestsLeft;
     private RecyclerView rvDcfStocks;
     private DcfStockAdapter dcfAdapter;
     private List<Stock> dcfBargainList;
     private Button btnScanDcf;
+    private float currentGrowthRate;
+    private float currentDiscountRate;
+    private float currentTerminalRate;
+    private static final String PREF_NAME = "DcfPreferences";
+    private static final String KEY_GROWTH = "growth_rate";
+    private static final String KEY_DISCOUNT = "discount_rate";
+    private static final String KEY_TERMINAL = "terminal_rate";
 
     private FirebaseFirestore db;
 
@@ -66,7 +71,74 @@ public class DcfFragment extends Fragment {
         View view = inflater.inflate(R.layout.fragment_dcf, container, false);
         db = FirebaseFirestore.getInstance();
         initViews(view);
+        ImageButton btnDcfSettings = view.findViewById(R.id.btnDcfSettings);
+        btnDcfSettings.setOnClickListener(v -> {
+            // כאן תוכל לפתוח את חלון ההגדרות שיצרנו, או חלון הגדרות ייעודי ל-DCF
+            showFinetuneDialog();
+        });
+        SharedPreferences prefs = requireActivity().getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+        currentGrowthRate = prefs.getFloat(KEY_GROWTH, 10.0f);
+        currentDiscountRate = prefs.getFloat(KEY_DISCOUNT, 10.0f);
+        currentTerminalRate = prefs.getFloat(KEY_TERMINAL, 2.5f);
         return view;
+    }
+
+    private void showFinetuneDialog() {
+        View dialogView = LayoutInflater.from(getContext()).inflate(R.layout.dialog_finetune_dcf, null);
+
+        // מציאת הסליידרים
+        com.google.android.material.slider.Slider sliderGrowth = dialogView.findViewById(R.id.sliderDcfGrowth);
+        com.google.android.material.slider.Slider sliderDiscount = dialogView.findViewById(R.id.sliderDcfDiscount);
+        com.google.android.material.slider.Slider sliderTerminal = dialogView.findViewById(R.id.sliderDcfTerminal);
+
+        // מציאת חלוניות הטקסט
+        TextView tvGrowthValue = dialogView.findViewById(R.id.tvGrowthValue);
+        TextView tvDiscountValue = dialogView.findViewById(R.id.tvDiscountValue);
+        TextView tvTerminalValue = dialogView.findViewById(R.id.tvTerminalValue);
+
+        // הגדרת מאזינים לסליידרים שיעדכנו את הטקסט בזמן אמת
+        sliderGrowth.addOnChangeListener((slider, value, fromUser) -> tvGrowthValue.setText(value + "%"));
+        sliderDiscount.addOnChangeListener((slider, value, fromUser) -> tvDiscountValue.setText(value + "%"));
+        sliderTerminal.addOnChangeListener((slider, value, fromUser) -> tvTerminalValue.setText(value + "%"));
+
+        // טעינת הערכים ההתחלתיים לסליידרים (הטקסט יתעדכן אוטומטית בגלל המאזינים)
+        sliderGrowth.setValue(currentGrowthRate);
+        sliderDiscount.setValue(currentDiscountRate);
+        sliderTerminal.setValue(currentTerminalRate);
+
+        // יצירת הדיאלוג ושמירתו כמשתנה
+        androidx.appcompat.app.AlertDialog dialog = new com.google.android.material.dialog.MaterialAlertDialogBuilder(requireContext())
+                .setTitle("הגדרות סורק DCF")
+                .setView(dialogView)
+                .setPositiveButton("שמור", (d, which) -> {
+                    currentGrowthRate = sliderGrowth.getValue();
+                    currentDiscountRate = sliderDiscount.getValue();
+                    currentTerminalRate = sliderTerminal.getValue();
+
+                    SharedPreferences prefs = requireActivity().getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+                    SharedPreferences.Editor editor = prefs.edit();
+                    editor.putFloat(KEY_GROWTH, currentGrowthRate);
+                    editor.putFloat(KEY_DISCOUNT, currentDiscountRate);
+                    editor.putFloat(KEY_TERMINAL, currentTerminalRate);
+                    editor.apply();
+
+                    Toast.makeText(getContext(), "הגדרות נשמרו בהצלחה", Toast.LENGTH_SHORT).show();
+                })
+                .setNegativeButton("ביטול", (d, which) -> d.dismiss())
+                // אנחנו מגדירים את הלחצן כ-null כדי לדרוס אותו מיד אחרי ההצגה
+                .setNeutralButton("איפוס למקור", null)
+                .create();
+
+        // חובה להציג את הדיאלוג לפני שדורסים את לחצן ה-Neutral
+        dialog.show();
+
+        // דריסת כפתור האיפוס כך שישנה את הסליידרים אך *לא* יסגור את החלון
+        dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_NEUTRAL).setOnClickListener(v -> {
+            sliderGrowth.setValue(10.0f);
+            sliderDiscount.setValue(10.0f);
+            sliderTerminal.setValue(2.5f);
+            // חלוניות הטקסט מתעדכנות אוטומטית בזכות ה-addOnChangeListener למעלה
+        });
     }
 
     private void initViews(View view) {
@@ -86,7 +158,18 @@ public class DcfFragment extends Fragment {
         rvDcfStocks = view.findViewById(R.id.rvDcfStocks);
         rvDcfStocks.setLayoutManager(new LinearLayoutManager(getContext()));
         dcfBargainList = new ArrayList<>();
-        dcfAdapter = new DcfStockAdapter(dcfBargainList);
+        dcfAdapter = new DcfStockAdapter(dcfBargainList, new DcfStockAdapter.OnStockClickListener() {
+            @Override
+            public void onStockClick(Stock stock) {
+                AddStockFragment addStockFragment = new AddStockFragment();
+                Bundle args = new Bundle();
+                args.putString("ticker", stock.getTicker());
+                addStockFragment.setArguments(args);
+
+                addStockFragment.show(getChildFragmentManager(), "AddStockBottomSheet");
+            }
+        });
+
         rvDcfStocks.setAdapter(dcfAdapter);
         btnScanDcf = view.findViewById(R.id.btnScanDcfMarket);
         btnScanDcf.setOnClickListener(v -> scanDcfMarket());
@@ -414,16 +497,11 @@ public class DcfFragment extends Fragment {
     }
 
     private void checkQuotaAndFetch(String ticker, double growthRate, double discountRate, double terminalGrowth) {
-        if (apiRequestsLeft < 3) {
-            showError("חרגת ממכסת ה-API להיום!");
-            return; // עוצרים הכל ולא פונים ל-API
-        }
         fetchDataFromApi(ticker, growthRate, discountRate, terminalGrowth);
     }
 
     // שרשור קריאות API: קודם Cash Flow, ואז Overview (למניות), ואז Quote (למחיר)
     private void fetchDataFromApi(String ticker, double growthRate, double discountRate, double terminalGrowth) {
-        decreaseApiCount(3);
         StockApiService api = RetrofitClient.getApiService();
 
         api.getCashFlow("CASH_FLOW", ticker, API_KEY).enqueue(new Callback<CashFlowResponse>() {
@@ -582,16 +660,14 @@ public class DcfFragment extends Fragment {
 
         SharedPreferences apiPrefs = requireContext().getSharedPreferences("API_PREFS", Context.MODE_PRIVATE);
         long lastReset = apiPrefs.getLong("last_reset_date", 0);
-        apiRequestsLeft = apiPrefs.getInt("requests_left", DAILY_LIMIT);
 
         // אם עברו 24 שעות (86,400,000 מילישניות), נאפס חזרה ל-25
 //        if (System.currentTimeMillis() - lastReset > 86400000) {
         if (System.currentTimeMillis() - lastReset > 0) {
 
-            apiRequestsLeft = DAILY_LIMIT;
             apiPrefs.edit()
                     .putLong("last_reset_date", System.currentTimeMillis())
-                    .putInt("requests_left", apiRequestsLeft)
+                    .putInt("requests_left", 100)
                     .apply();
         }
         updateCalculateButtonUI();
@@ -600,26 +676,11 @@ public class DcfFragment extends Fragment {
     private void updateCalculateButtonUI() {
         if (getActivity() == null) return;
         getActivity().runOnUiThread(() -> {
-            btnCalculate.setText("Calculate (" + apiRequestsLeft + " calls left)");
+            btnCalculate.setText("Calculate");
 
-            // צביעת הטקסט באדום אם אין מספיק קריאות לחישוב מלא (צריך 3 קריאות)
-            if (apiRequestsLeft < 3) {
-                btnCalculate.setTextColor(android.graphics.Color.RED);
-            } else {
                 btnCalculate.setTextColor(android.graphics.Color.WHITE);
-            }
+
         });
-    }
-
-    private void decreaseApiCount(int amount) {
-        if (getActivity() == null) return;
-        apiRequestsLeft -= amount;
-        if (apiRequestsLeft < 0) apiRequestsLeft = 0; // לא נרד מתחת לאפס
-
-        SharedPreferences prefs = requireContext().getSharedPreferences("API_PREFS", Context.MODE_PRIVATE);
-        prefs.edit().putInt("requests_left", apiRequestsLeft).apply();
-
-        updateCalculateButtonUI();
     }
 
     private void showError(String msg) {

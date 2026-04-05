@@ -11,11 +11,15 @@ import java.util.List;
 public class DcfStockAdapter extends RecyclerView.Adapter<DcfStockAdapter.DcfViewHolder> {
 
     private List<Stock> stockList;
-
-    public DcfStockAdapter(List<Stock> stockList) {
-        this.stockList = stockList;
+    public interface OnStockClickListener {
+        void onStockClick(Stock stock);
     }
+    private OnStockClickListener listener;
 
+    public DcfStockAdapter(List<Stock> dcfBargainList, OnStockClickListener listener) {
+        this.stockList = dcfBargainList;
+        this.listener = listener;
+    }
     @NonNull
     @Override
     public DcfViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
@@ -30,6 +34,11 @@ public class DcfStockAdapter extends RecyclerView.Adapter<DcfStockAdapter.DcfVie
         holder.tvCurrentPrice.setText(String.format("Price: $%.2f", stock.getCurrentPrice()));
         holder.tvIntrinsicValue.setText(String.format("Fair Value: $%.2f", stock.getIntrinsicValue()));
         holder.tvGrowth.setText(String.format("Expected Growth: %.1f%%", stock.getExpectedGrowth()));
+        holder.itemView.setOnClickListener(v -> {
+            if (listener != null) {
+                listener.onStockClick(stock);
+            }
+        });
     }
 
     @Override

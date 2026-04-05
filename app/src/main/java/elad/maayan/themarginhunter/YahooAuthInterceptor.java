@@ -6,6 +6,7 @@ import okhttp3.HttpUrl;
 import okhttp3.Interceptor;
 import okhttp3.Request;
 import okhttp3.Response;
+import okhttp3.OkHttpClient; // נוסף
 
 public class YahooAuthInterceptor implements Interceptor {
     private static String cookie = null;
@@ -15,21 +16,29 @@ public class YahooAuthInterceptor implements Interceptor {
     @Override
     public Response intercept(Chain chain) throws IOException {
         Request originalRequest = chain.request();
+        String url = originalRequest.url().toString();
 
-        // 1. מוודאים שיש לנו עוגייה וקראמב, ואם אין - מושכים אותם
+        // הגנה 1: אם זו לא בקשה ליאהו, אל תיגע בכלום (אלפא ונטאג' ופינהאב יעבדו רגיל)
+        if (!url.contains("yahoo.com")) {
+            return chain.proceed(originalRequest);
+        }
+
+        // הגנה 2: מניעת לולאה אינסופית בזמן משיכת טוקנים
+        if (url.contains("fc.yahoo.com") || url.contains("getcrumb")) {
+            return chain.proceed(originalRequest);
+        }
+
         synchronized (this) {
             if (cookie == null || crumb == null) {
-                fetchAuthTokens(chain);
+                fetchAuthTokens(); // שימוש בשיטה חיצונית ללא Chain
             }
         }
 
-        // 2. שותלים את הקראמב בכתובת ה-URL
         HttpUrl.Builder urlBuilder = originalRequest.url().newBuilder();
         if (crumb != null) {
             urlBuilder.addQueryParameter("crumb", crumb);
         }
 
-        // 3. שותלים את העוגייה והדפדפן המזויף בכותרות הבקשה
         Request.Builder requestBuilder = originalRequest.newBuilder()
                 .url(urlBuilder.build())
                 .header("User-Agent", USER_AGENT);
@@ -41,37 +50,38 @@ public class YahooAuthInterceptor implements Interceptor {
         return chain.proceed(requestBuilder.build());
     }
 
-    private void fetchAuthTokens(Chain chain) throws IOException {
-        // משיכת עוגייה מיאהו
-        Request cookieReq = new Request.Builder()
-                .url("https://fc.yahoo.com")
-                .header("User-Agent", USER_AGENT)
-                .build();
+    private void fetchAuthTokens() {
+        OkHttpClient internalClient = new OkHttpClient();
 
-        try (Response cookieRes = chain.proceed(cookieReq)) {
-            List<String> cookies = cookieRes.headers("Set-Cookie");
-            if (!cookies.isEmpty()) {
-                cookie = cookies.get(0).split(";")[0]; // שומרים רק את מזהה העוגייה
-            }
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-
-        // משיכת הקראמב בעזרת העוגייה
-        if (cookie != null) {
-            Request crumbReq = new Request.Builder()
-                    .url("https://query1.finance.yahoo.com/v1/test/getcrumb")
-                    .header("Cookie", cookie)
+        try {
+            // משיכת עוגייה
+            Request cookieReq = new Request.Builder()
+                    .url("https://fc.yahoo.com")
                     .header("User-Agent", USER_AGENT)
                     .build();
 
-            try (Response crumbRes = chain.proceed(crumbReq)) {
-                if (crumbRes.isSuccessful() && crumbRes.body() != null) {
-                    crumb = crumbRes.body().string();
+            try (Response res = internalClient.newCall(cookieReq).execute()) {
+                List<String> cookies = res.headers("Set-Cookie");
+                if (!cookies.isEmpty()) {
+                    cookie = cookies.get(0).split(";")[0];
                 }
-            } catch (Exception e) {
-                e.printStackTrace();
             }
+
+            // משיכת קראמב
+            if (cookie != null) {
+                Request crumbReq = new Request.Builder()
+                        .url("https://query1.finance.yahoo.com/v1/test/getcrumb")
+                        .header("Cookie", cookie)
+                        .header("User-Agent", USER_AGENT)
+                        .build();
+                try (Response res = internalClient.newCall(crumbReq).execute()) {
+                    if (res.isSuccessful() && res.body() != null) {
+                        crumb = res.body().string();
+                    }
+                }
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
         }
     }
 }

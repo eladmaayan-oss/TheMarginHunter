@@ -20,6 +20,7 @@ public class StockAdapter extends RecyclerView.Adapter<StockAdapter.StockViewHol
     private StockAdapterListener listener;
     private List<Stock> fullStockList = new ArrayList<>();
 
+
     @NonNull
     @Override
     public StockAdapter.StockViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
@@ -130,6 +131,11 @@ public class StockAdapter extends RecyclerView.Adapter<StockAdapter.StockViewHol
 
         holder.btnEdit.setOnClickListener(v -> {
             if (listener != null) listener.onEditClicked(stock);
+        });
+        holder.itemView.setOnClickListener(v -> {
+            if (listener != null) {
+                listener.onStockClicked(stock);
+            }
         });
     }
     public List<Stock> getStocks() {

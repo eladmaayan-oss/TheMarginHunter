@@ -33,25 +33,9 @@ public interface StockApiService {
             @Query("symbol") String symbol,     // הטיקר, למשל "AAPL"
             @Query("apikey") String apiKey      // המפתח שלך
     );
-//    @GET("quote")
-//    Call<FinnhubQuoteResponse> getStockQuote(
-//            @Query("symbol") String symbol,
-//            @Query("token") String apiKey
-//    );
 
-//    @GET("stock/metric")
-//    Call<FinnhubMetricResponse> getStockMetrics(
-//            @Query("symbol") String symbol,
-//            @Query("metric") String metricType, // אנחנו נעביר כאן "all"
-//            @Query("token") String apiKey
-//    );
-
-
-//    @GET("stock/profile2")
-//    Call<FinnhubProfileResponse> getCompanyProfile(
-//            @Query("symbol") String symbol,
-//            @Query("token") String apiKey
-//    );
+    @GET("v10/finance/quoteSummary/{symbol}?modules=summaryProfile")
+    Call<YahooProfileResponse> getStockProfile(@Path("symbol") String symbol);
 
     @GET("https://finnhub.io/api/v1/quote")
     Call<FinnhubQuoteResponse> getStockQuote(
@@ -77,4 +61,6 @@ public interface StockApiService {
     Call<YahooChartResponse> getYahooChart(@Url String url);
     @GET
     Call<YahooBulkQuoteResponse> getYahooBulkQuotes(@Url String url);
+
+
 }

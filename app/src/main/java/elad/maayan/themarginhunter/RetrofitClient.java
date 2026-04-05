@@ -1,5 +1,7 @@
 package elad.maayan.themarginhunter;
 
+import java.util.concurrent.TimeUnit;
+
 import okhttp3.OkHttpClient;
 import okhttp3.logging.HttpLoggingInterceptor;
 import retrofit2.Retrofit;
@@ -19,7 +21,9 @@ public class RetrofitClient {
             // כאן השינוי: מחברים גם את יאהו וגם את הלוגר ל-OkHttpClient
             OkHttpClient client = new OkHttpClient.Builder()
                     .addInterceptor(new YahooAuthInterceptor()) // הסוכן החשאי ליאהו
-                    .addInterceptor(loggingInterceptor)         // הלוגר ששכחת לחבר
+                    .addInterceptor(loggingInterceptor)
+                    .connectTimeout(30, TimeUnit.SECONDS) // חשוב לסריקות ארוכות
+                    .readTimeout(30, TimeUnit.SECONDS)
                     .build();
 
             retrofit = new Retrofit.Builder()
