@@ -73,7 +73,7 @@ public class MainActivity extends AppCompatActivity {
         }
 
         // 5. הפעלת משימות הרקע
-        setupBackgroundWork();
+//        setupBackgroundWork();
     }
 
     private void checkNotificationPermission() {

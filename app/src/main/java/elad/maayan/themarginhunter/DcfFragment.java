@@ -31,6 +31,7 @@ import com.google.firebase.firestore.QueryDocumentSnapshot;
 import com.google.firebase.firestore.SetOptions;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -62,6 +63,8 @@ public class DcfFragment extends Fragment {
     private static final String KEY_GROWTH = "growth_rate";
     private static final String KEY_DISCOUNT = "discount_rate";
     private static final String KEY_TERMINAL = "terminal_rate";
+    private int currentDcfIndex = 0;
+    private List<String> dcfTickersToScan = new ArrayList<>();
 
     private FirebaseFirestore db;
 
@@ -209,22 +212,55 @@ public class DcfFragment extends Fragment {
     }
 
     private void fetchDcfBargains() {
-        db.collection("dcf_stocks")
+        db.collection("stocks")
                 .addSnapshotListener((value, error) -> {
-                    if (isAdded()) {
-                        if (error != null) {
-                            Log.e("DCF", "Listen failed.");
-                            return;
-                        }
-                        if (value != null) {
-                            dcfBargainList.clear();
-                            for (QueryDocumentSnapshot document : value) {
+                    if (!isAdded() || error != null || value == null) return;
+
+                    // מריצים את החישוב ב-Thread צדדי כדי לא לתקוע את המסך
+                    new Thread(() -> {
+                        List<Stock> tempList = new ArrayList<>();
+
+                        for (QueryDocumentSnapshot document : value) {
+                            try {
                                 Stock stock = document.toObject(Stock.class);
-                                dcfBargainList.add(stock);
+
+                                // בודקים שיש לנו את נתוני הבסיס לחישוב
+                                if (stock.getFcf() > 0 && stock.getSharesOutstanding() > 0 && stock.getCurrentPrice() > 0) {
+
+                                    // חישוב שווי פנימי מקומי לפי הסליידרים הנוכחיים!
+                                    double intrinsic = runDcfCalculation(
+                                            stock.getFcf(),
+                                            stock.getSharesOutstanding(),
+                                            currentGrowthRate / 100.0,
+                                            currentDiscountRate / 100.0,
+                                            currentTerminalRate / 100.0
+                                    );
+
+                                    stock.setIntrinsicValue(intrinsic); // שמירה זמנית רק בזיכרון של המכשיר
+
+                                    // אם המחיר זול מהשווי הפנימי - מוסיפים לרשימת המציאות
+                                    if (intrinsic > stock.getCurrentPrice()) {
+                                        // מחושב אוטומטית כי ה-intrinsic התעדכן
+                                        stock.setMarginOfSafety(stock.calculateMarginOfSafetyLogic());
+                                        tempList.add(stock);
+                                    }
+                                }
+                            } catch (Exception e) {
+                                Log.e("DCF", "Error parsing stock for DCF", e);
                             }
-                            dcfAdapter.notifyDataSetChanged();
                         }
-                    }
+
+                        // מיון מהמציאה הגדולה ביותר לקטנה ביותר
+                        Collections.sort(tempList, (s1, s2) ->
+                                Double.compare(s2.getMarginOfSafety(), s1.getMarginOfSafety()));
+
+                        // חזרה למסך הראשי כדי לעדכן תצוגה
+                        requireActivity().runOnUiThread(() -> {
+                            dcfBargainList.clear();
+                            dcfBargainList.addAll(tempList);
+                            dcfAdapter.notifyDataSetChanged();
+                        });
+                    }).start();
                 });
     }
 
@@ -260,25 +296,34 @@ public class DcfFragment extends Fragment {
         cardResult.setVisibility(View.GONE);
         btnCalculate.setEnabled(false);
 
+// במקום getString, אנחנו משתמשים ב-Double או בהמרה ישירה מהאובייקט
+        // בתוך startDcfProcess, בתוך ה-onSuccess של ה-Firebase
         db.collection("stocks").document(ticker).get().addOnSuccessListener(documentSnapshot -> {
-            if (documentSnapshot.exists() && documentSnapshot.contains("fcf") && documentSnapshot.contains("sharesOutstanding")) {
-                Log.d("DCF", "Data found in Firebase! No API calls needed.");
+            if (documentSnapshot.exists()) {
                 try {
-                    double fcf = Double.parseDouble(documentSnapshot.getString("fcf"));
-                    double shares = Double.parseDouble(documentSnapshot.getString("sharesOutstanding"));
-                    double currentPrice = documentSnapshot.contains("price") ? Double.parseDouble(documentSnapshot.getString("price")) : 0.0;
+                    // הדרך הבטוחה: המרה לאובייקט Stock שכבר מעודכן ל-doubles
+                    Stock stock = documentSnapshot.toObject(Stock.class);
 
-                    calculateAndDisplayDcf(fcf, shares, currentPrice, growthRate, discountRate, terminalGrowth);
+                    if (stock != null && stock.getFcf() > 0 && stock.getSharesOutstanding() > 0) {
+                        // אין צורך ב-ParseDouble! הנתונים כבר מסוג double
+                        calculateAndDisplayDcf(
+                                stock.getFcf(),
+                                stock.getSharesOutstanding(),
+                                stock.getCurrentPrice(),
+                                growthRate, discountRate, terminalGrowth
+                        );
+                    } else {
+                        checkQuotaAndFetch(ticker, growthRate, discountRate, terminalGrowth);
+                    }
                 } catch (Exception e) {
+                    Log.e("DCF", "Error casting Firebase data", e);
                     checkQuotaAndFetch(ticker, growthRate, discountRate, terminalGrowth);
                 }
             } else {
-                Log.d("DCF", "Data missing in Firebase. Fetching from API...");
                 checkQuotaAndFetch(ticker, growthRate, discountRate, terminalGrowth);
             }
-        }).addOnFailureListener(e -> {
-            checkQuotaAndFetch(ticker, growthRate, discountRate, terminalGrowth);
         });
+        checkQuotaAndFetch(ticker, growthRate, discountRate, terminalGrowth);
     }
 
     private void autoFillDcfParams(String ticker) {
@@ -352,125 +397,49 @@ public class DcfFragment extends Fragment {
     }
 
     private void scanDcfMarket() {
-        // 1. מוודאים ששדה הטיקר ריק
+        // 1. הגנה: מוודאים ששדה החיפוש ריק כדי לא להתבלבל עם מניה בודדת
         String tickerInput = etTicker.getText().toString().trim();
         if (!TextUtils.isEmpty(tickerInput)) {
-            showError("כדי לסרוק את השוק, אנא נקה את שדה הטיקר (Ticker).");
+            Toast.makeText(getContext(), "כדי לסרוק את השוק, נקה את שדה הטיקר", Toast.LENGTH_SHORT).show();
             return;
         }
 
-        // 2. משיכת הנתונים מהמחשבון
-        String growthStr = etGrowth.getText().toString().trim();
-        String discountStr = etDiscount.getText().toString().trim();
-        String terminalStr = etTerminalGrowth.getText().toString().trim();
-
-        final Double customGrowth = TextUtils.isEmpty(growthStr) ? null : Double.parseDouble(growthStr) / 100.0;
-        final Double customDiscount = TextUtils.isEmpty(discountStr) ? null : Double.parseDouble(discountStr) / 100.0;
-        final Double customTerminal = TextUtils.isEmpty(terminalStr) ? null : Double.parseDouble(terminalStr) / 100.0;
-
+        // מתחילים להציג את מד ההתקדמות
         layoutProgress.setVisibility(View.VISIBLE);
-        tvProgressText.setText("מכין רשימה ממניות גראהם...");
+        tvProgressText.setText("שולף מניות מהמחסן הכללי...");
 
-        // 3. מחיקת תוצאות DCF קודמות
-        db.collection("dcf_stocks").get().addOnSuccessListener(queryDocumentSnapshots -> {
+        // 2. פונים ישירות למחסן הכללי ("stocks") כדי להביא את כל המניות שהאפליקציה מכירה
+        db.collection("stocks").get().addOnSuccessListener(queryDocumentSnapshots -> {
+            dcfTickersToScan.clear();
+
+            // ממלאים את הרשימה
             for (QueryDocumentSnapshot doc : queryDocumentSnapshots) {
-                doc.getReference().delete();
+                String ticker = doc.getString("ticker");
+                if (ticker != null) {
+                    dcfTickersToScan.add(ticker);
+                }
             }
 
-            // 4. *** כאן השינוי! שולפים את המניות מה-Bargain Bin ***
-            // שנה את "bargain_stocks" אם האוסף שלך נקרא אחרת
-            db.collection("bargain_stocks").get().addOnSuccessListener(bargainSnapshots -> {
-                List<String> tickers = new ArrayList<>();
-                for (QueryDocumentSnapshot doc : bargainSnapshots) {
-                    String ticker = doc.getString("ticker");
-                    if (ticker != null) {
-                        tickers.add(ticker);
-                    }
-                }
-
-                if (tickers.isEmpty()) {
-                    showError("אין מניות ב-Bargain Bin לסרוק!");
-                    layoutProgress.setVisibility(View.GONE);
-                    return;
-                }
-
-                int totalStocks = tickers.size();
-                progressBarHorizontal.setMax(totalStocks);
-                progressBarHorizontal.setProgress(0);
-                final int[] completed = {0};
-
-                StockApiService apiService = RetrofitClient.getApiService();
-
-                // 5. מריצים את ה-DCF *רק* על המניות ששלפנו מקודם
-                for (String ticker : tickers) {
-                    String url = "https://query2.finance.yahoo.com/v10/finance/quoteSummary/" + ticker +
-                            "?modules=defaultKeyStatistics,financialData,earningsTrend";
-
-                    apiService.getYahooSummary(url).enqueue(new Callback<YahooSummaryResponse>() {
-                        @Override
-                        public void onResponse(Call<YahooSummaryResponse> call, Response<YahooSummaryResponse> response) {
-                            completed[0]++;
-                            updateProgressUI(completed[0], totalStocks);
-
-                            if (response.isSuccessful() && response.body() != null) {
-                                try {
-                                    YahooSummaryResponse.Result result = response.body().getQuoteSummary().getResult().get(0);
-
-                                    double currentPrice = result.getFinancialData().getCurrentPrice().getRaw();
-                                    double shares = result.getDefaultKeyStatistics().getSharesOutstanding().getRaw();
-                                    double fcf = result.getFinancialData().getFreeCashflow().getRaw();
-
-                                    double discountRate;
-                                    if (customDiscount != null) {
-                                        discountRate = customDiscount;
-                                    } else {
-                                        double beta = (result.getDefaultKeyStatistics().getBeta() != null) ?
-                                                result.getDefaultKeyStatistics().getBeta().getRaw() : 1.0;
-                                        discountRate = (beta < 0.8) ? 0.08 : (beta > 1.3) ? 0.12 : 0.10;
-                                    }
-
-                                    double expectedGrowth;
-                                    if (customGrowth != null) {
-                                        expectedGrowth = customGrowth;
-                                    } else {
-                                        expectedGrowth = 0.05;
-                                        if (result.getEarningsTrend() != null) {
-                                            for (YahooSummaryResponse.Trend trend : result.getEarningsTrend().getTrend()) {
-                                                if ("+5y".equals(trend.getPeriod()) && trend.getGrowth() != null) {
-                                                    expectedGrowth = trend.getGrowth().getRaw();
-                                                    break;
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    double terminalGrowth = (customTerminal != null) ? customTerminal : 0.025;
-
-                                    double intrinsicValue = runDcfCalculation(fcf, shares, expectedGrowth, discountRate, terminalGrowth);
-
-                                    if (currentPrice < intrinsicValue) {
-                                        saveDcfBargainToFirebase(ticker, currentPrice, intrinsicValue, expectedGrowth);
-                                    }
-
-                                } catch (Exception e) {
-                                    Log.e("DCF_SCAN", "Error parsing " + ticker + ": " + e.getMessage());
-                                }
-                            }
-                        }
-
-                        @Override
-                        public void onFailure(Call<YahooSummaryResponse> call, Throwable t) {
-                            completed[0]++;
-                            updateProgressUI(completed[0], totalStocks);
-                        }
-                    });
-                }
-            }).addOnFailureListener(e -> {
-                showError("שגיאה בשליפת מניות מה-Bargain Bin: " + e.getMessage());
+            // עכשיו, אחרי ששלפנו מהשרת, אנחנו בודקים אם הרשימה ריקה!
+            if (dcfTickersToScan.isEmpty()) {
+                showError("לא נמצאו מניות במחסן הכללי לסריקה");
                 layoutProgress.setVisibility(View.GONE);
-            });
+                return;
+            }
+
+            // 3. אתחול המדדים והתחלת הסריקה (הטפטפת)
+            currentDcfIndex = 0;
+            progressBarHorizontal.setMax(dcfTickersToScan.size());
+            progressBarHorizontal.setProgress(0);
+
+            processNextDcfTicker();
+
+        }).addOnFailureListener(e -> {
+            showError("שגיאה בשליפת מניות: " + e.getMessage());
+            layoutProgress.setVisibility(View.GONE);
         });
     }
+
     // פונקציית עזר לחישוב המתמטי
     private double runDcfCalculation(double fcf, double shares, double growth, double discount, double terminal) {
         double projectedFcf = fcf;
@@ -484,16 +453,77 @@ public class DcfFragment extends Fragment {
         return (pvSum + pvTerminal) / shares;
     }
 
-    // שמירה לאוסף נפרד ב-Firebase בשם "dcf_stocks"
-    private void saveDcfBargainToFirebase(String ticker, double price, double intrinsic, double growth) {
-        Map<String, Object> data = new HashMap<>();
-        data.put("ticker", ticker);
-        data.put("currentPrice", price);
-        data.put("intrinsicValue", intrinsic);
-        data.put("expectedGrowth", growth * 100);
-        data.put("timestamp", System.currentTimeMillis());
+    private void fetchSingleDcfFromYahoo(String ticker) {
+        db.collection("stocks").document(ticker).get().addOnSuccessListener(documentSnapshot -> {
+            if (documentSnapshot.exists()) {
+                Stock stock = documentSnapshot.toObject(Stock.class);
+                // אם כבר יש לנו תזרים ומניות, אין צורך להטריד את יאהו
+                if (stock != null && stock.getFcf() > 0 && stock.getSharesOutstanding() > 0) {
+                    return; // יוצאים, ה-SnapshotListener כבר ידאג להציג אותה!
+                }
+            }
 
-        db.collection("dcf_stocks").document(ticker).set(data);
+            // אם חסרים נתונים גולמיים, נמשוך מיאהו ונשמור במחסן הכללי
+            fetchFromYahooAsFallback(ticker);
+        });
+    }
+
+    // הפרדתי את הקריאה ליאהו לפונקציה נפרדת כדי שהקוד יהיה קריא
+    private void fetchFromYahooAsFallback(String ticker) {
+        String url = "https://query2.finance.yahoo.com/v10/finance/quoteSummary/" + ticker +
+                "?modules=defaultKeyStatistics,financialData";
+
+        RetrofitClient.getApiService().getYahooSummary(url).enqueue(new Callback<YahooSummaryResponse>() {
+            @Override
+            public void onResponse(Call<YahooSummaryResponse> call, Response<YahooSummaryResponse> response) {
+                if (!isAdded() || getContext() == null) return;
+                if (response.isSuccessful() && response.body() != null) {
+                    try {
+                        YahooSummaryResponse.Result result = response.body().getQuoteSummary().getResult().get(0);
+
+                        double price = result.getFinancialData().getCurrentPrice().getRaw();
+                        double shares = result.getDefaultKeyStatistics().getSharesOutstanding().getRaw();
+                        double fcf = result.getFinancialData().getFreeCashflow().getRaw();
+
+                        // רק שומרים את הנתונים הגולמיים במחסן הראשי!
+                        // ברגע שזה ישמר, ה-SnapshotListener שהגדרנו למעלה יקפוץ אוטומטית ויחשב את ה-DCF.
+                        saveToGeneralStocks(ticker, price, fcf, shares);
+
+                    } catch (Exception e) {
+                        Log.e("DCF_SCAN", "Error processing " + ticker);
+                    }
+                }
+            }
+            @Override public void onFailure(Call<YahooSummaryResponse> call, Throwable t) {}
+        });
+    }
+
+    // פונקציית עזר לעדכון המחסן הכללי
+    private void saveToGeneralStocks(String ticker, double price, double fcf, double shares) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("currentPrice", price);
+        data.put("fcf", fcf);
+        data.put("sharesOutstanding", shares);
+        db.collection("stocks").document(ticker).set(data, SetOptions.merge());
+    }
+
+    private void processNextDcfTicker() {
+        if (getContext() == null || currentDcfIndex >= dcfTickersToScan.size()) {
+            layoutProgress.setVisibility(View.GONE);
+            Toast.makeText(getContext(), "סריקת DCF הסתיימה!", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        String ticker = dcfTickersToScan.get(currentDcfIndex);
+        updateProgressUI(currentDcfIndex + 1, dcfTickersToScan.size());
+
+        // ביצוע הקריאה ליאהו עבור מניה אחת
+        fetchSingleDcfFromYahoo(ticker);
+
+        currentDcfIndex++;
+
+        // השהיה של 1.8 שניות (DCF כבד יותר מבחינת נתונים, אז ניתן להם לנשום)
+        new Handler(Looper.getMainLooper()).postDelayed(this::processNextDcfTicker, 1800);
     }
 
     private void checkQuotaAndFetch(String ticker, double growthRate, double discountRate, double terminalGrowth) {
@@ -532,6 +562,7 @@ public class DcfFragment extends Fragment {
             public void onFailure(Call<CashFlowResponse> call, Throwable t) { showError("Network Error"); }
         });
     }
+
 
     private void fetchOverviewForDcf(StockApiService api, String ticker, double fcf, double growthRate, double discountRate, double terminalGrowth) {
         api.getCompanyOverview("OVERVIEW", ticker, API_KEY).enqueue(new Callback<CompanyOverviewResponse>() {
@@ -599,14 +630,14 @@ public class DcfFragment extends Fragment {
 
     private void saveToFirebase(String ticker, double fcf, double shares, double price) {
         Map<String, Object> updates = new HashMap<>();
-        updates.put("fcf", String.valueOf(fcf));
-        updates.put("sharesOutstanding", String.valueOf(shares));
-        if (price > 0) updates.put("price", String.valueOf(price));
+        updates.put("fcf", fcf); // שומרים כמספר (double)
+        updates.put("sharesOutstanding", shares); // שומרים כמספר (double)
+        if (price > 0) updates.put("currentPrice", price); // שים לב לשם השדה currentPrice
 
-        db.collection("stocks").document(ticker).set(updates, SetOptions.merge());
+        db.collection("stocks").document(ticker).set(updates, SetOptions.merge())
+                .addOnFailureListener(e -> Log.e("DCF", "Failed to save to Firebase", e));
     }
 
-    // נוסחת ה-DCF
     private void calculateAndDisplayDcf(double fcf, double shares, double currentPrice, double growthRate, double discountRate, double terminalGrowth) {
         double projectedFcf = fcf;
         double presentValueSum = 0;

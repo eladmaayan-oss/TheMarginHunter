@@ -19,21 +19,22 @@ public class Stock {
     }
 
     @PropertyName("fcf")
-    private String fcf;
+    private double fcf;
+
     @PropertyName("sharesOutstanding")
-    private String sharesOutstanding;
+    private double sharesOutstanding;
 
     @PropertyName("fcf")
-    public String getFcf() { return fcf; }
+    public double getFcf() { return fcf; }
 
     @PropertyName("fcf")
-    public void setFcf(String fcf) { this.fcf = fcf; }
+    public void setFcf(double fcf) { this.fcf = fcf; }
 
     @PropertyName("sharesOutstanding")
-    public String getSharesOutstanding() { return sharesOutstanding; }
+    public double getSharesOutstanding() { return sharesOutstanding; }
 
     @PropertyName("sharesOutstanding")
-    public void setSharesOutstanding(String sharesOutstanding) { this.sharesOutstanding = sharesOutstanding; }
+    public void setSharesOutstanding(double sharesOutstanding) { this.sharesOutstanding = sharesOutstanding; }
 
     @PropertyName("ticker")
     private String ticker;

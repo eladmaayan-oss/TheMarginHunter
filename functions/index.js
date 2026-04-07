@@ -29,10 +29,10 @@ exports.calculateStockValue = onDocumentWritten("stocks/{ticker}", (event) => {
   // נוסחת בנג'מין גרהם
   const intrinsicValue = (eps * (8.5 + 2 * growthRate) * 4.4) / currentYield;
 
-  console.log(`Clclating value for ${event.params.ticker}: ${intrinsicValue}`);
+  console.log(`Clclting value for ${event.params.ticker}: ${intrinsicValue}`);
 
   return event.data.after.ref.set({
     intrinsicValue: intrinsicValue,
-    lastCalculated: new Date().toISOString(),
+    lastCalculated: Date.now(), // שינוי מ-toISOString() ל-Date.now()
   }, {merge: true});
 });

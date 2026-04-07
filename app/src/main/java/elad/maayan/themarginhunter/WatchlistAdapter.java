@@ -33,8 +33,8 @@ public class WatchlistAdapter extends RecyclerView.Adapter<WatchlistAdapter.View
         return new ViewHolder(view);
     }
 
-    public void updateList(List<Stock> filteredList) {
-        this.stocks = filteredList;
+    public void updateList(List<Stock> newList) {
+        this.stocks = newList;
         notifyDataSetChanged();
     }
 

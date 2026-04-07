@@ -325,18 +325,32 @@ public class AddStockFragment extends BottomSheetDialogFragment {
             String epsS = etEPS.getText().toString();
             String priS = etPrice.getText().toString();
             String groS = etGrowth.getText().toString();
-            if (!epsS.isEmpty() && !priS.isEmpty()) {
-                double eps = Double.parseDouble(epsS), pri = Double.parseDouble(priS), gro = groS.isEmpty() ? 0 : Double.parseDouble(groS);
-//                double yield = (currentDividendYield != null && !currentDividendYield.equals("None")) ?
-//                        Double.parseDouble(currentDividendYield) : 0;
-                double baseValue = eps * (8.5 + 2 * gro);
-                double dividendValue = (pri * currentDividendYield) * 5;
-                double finalIv = baseValue + dividendValue;
 
-                tvIntrinsicValueResult.setText(String.format("Intrinsic Value: $%.2f", finalIv));
-                tvIntrinsicValueResult.setTextColor(finalIv > pri ? Color.parseColor("#2E7D32") : Color.RED);
+            if (!epsS.isEmpty() && !priS.isEmpty()) {
+                double eps = Double.parseDouble(epsS);
+                double pri = Double.parseDouble(priS);
+                double gro = groS.isEmpty() ? 0 : Double.parseDouble(groS);
+
+                // 1. הגבלת צמיחה (חשוב לעקביות!)
+                if (gro > 15.0) gro = 15.0;
+                if (gro < 0) gro = 0;
+
+                // 2. נוסחת גראהם נקייה (בלי תוספת הדיבידנד ששיבשה את המחיר)
+                // שים לב: כאן כדאי להשתמש ב-8.5 ו-2.0 כסטנדרט
+                double finalIv = eps * (8.5 + 2.0 * gro);
+
+                tvIntrinsicValueResult.setText(String.format(java.util.Locale.US, "Intrinsic Value: $%.2f", finalIv));
+
+                // צביעת התוצאה: ירוק אם המחיר הנוכחי נמוך מהשווי הפנימי
+                if (finalIv > pri) {
+                    tvIntrinsicValueResult.setTextColor(Color.parseColor("#2E7D32")); // ירוק כהה
+                } else {
+                    tvIntrinsicValueResult.setTextColor(Color.parseColor("#C62828")); // אדום
+                }
             }
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            Log.e("ADD_STOCK", "Error calculating IV", e);
+        }
     }
 
     private void validateAndSave() {

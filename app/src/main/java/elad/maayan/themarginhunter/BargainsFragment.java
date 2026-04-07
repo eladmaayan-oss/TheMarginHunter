@@ -14,11 +14,12 @@ import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.ProgressBar;
+//import android.widget.ProgressBar;
 import android.widget.Toast;
 
 import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.QueryDocumentSnapshot;
+import com.google.firebase.firestore.SetOptions;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -36,13 +37,13 @@ import retrofit2.Response;
 public class BargainsFragment extends Fragment {
 
     private RecyclerView rvBargains;
-    private ProgressBar progressBar;
+//    private ProgressBar progressBar;
     private View layoutEmpty;
     private List<Stock> bargainStocksList = new ArrayList<>();
     private StockAdapter adapter;
     private FirebaseFirestore db = FirebaseFirestore.getInstance();
     private View layoutProgress;
-    private ProgressBar progressBarHorizontal;
+//    private ProgressBar progressBarHorizontal;
     private android.widget.TextView tvProgressText;
     private float currentBasePE = 8.5f;
     private float currentGrowthMult = 2.0f;
@@ -50,6 +51,9 @@ public class BargainsFragment extends Fragment {
     private int currentScanIndex = 0;
     private Handler scanHandler = new Handler(Looper.getMainLooper());
     private List<String> tickersToScan = new ArrayList<>();
+    private com.google.firebase.firestore.ListenerRegistration bargainListener;
+    private int currentIndex = 0;
+    private boolean isScanning = false;
 
     // TODO: Rename parameter arguments, choose names that match
     // the fragment initialization parameters, e.g. ARG_ITEM_NUMBER
@@ -71,45 +75,56 @@ public class BargainsFragment extends Fragment {
     }
 
     private void processNextTicker() {
-        if (getContext() == null || currentScanIndex >= tickersToScan.size()) {
+        if (!isAdded() || currentIndex >= tickersToScan.size()) {
+            isScanning = false;
             layoutProgress.setVisibility(View.GONE);
-            Toast.makeText(getContext(), "סריקת השוק הסתיימה בהצלחה!", Toast.LENGTH_LONG).show();
             return;
         }
 
-        String ticker = tickersToScan.get(currentScanIndex);
+        String ticker = tickersToScan.get(currentIndex);
 
-        // עדכון ה-UI
-        updateProgressUI(currentScanIndex + 1, tickersToScan.size());
+        // עדכון ה-ProgressBar (השתמש בפונקציה שכבר כתבת)
+        updateProgressUI(currentIndex + 1, tickersToScan.size());
 
-        // ביצוע הקריאה ליאהו עבור המניה הנוכחית בלבד
+        // שליפת הנתונים
         fetchDataFromServer(ticker);
 
-        currentScanIndex++;
-
-        // כאן הקסם: במקום לרוץ למניה הבאה מיד, מחכים 1500 מילישניות (שנייה וחצי)
-        scanHandler.postDelayed(this::processNextTicker, 1500);
+        // הקידום יתבצע כאן, אבל נשמור על מרווח נשימה
+        currentIndex++;
+        scanHandler.postDelayed(this::processNextTicker, 1200);
     }
 
     private void scanMarketForBargains() {
-        // טעינת רשימת הטיקרים מהיקום (ה-64 מניות)
+        // 1. הגנה מפני סריקה כפולה (אם כבר רץ, אל תתחיל שוב)
+        if (isScanning) return;
+
+        isScanning = true;
+        scanHandler.removeCallbacksAndMessages(null);
+
+        // 2. טעינת הרשימה
         tickersToScan = StockUniverse.getTopStocks();
         int totalStocks = tickersToScan.size();
 
-        // איפוס ממשק המשתמש (Progress Bar)
+        // 3. איפוס המונים - כאן היה ה-Bug!
+        // חייבים לאפס את currentIndex כי בו processNextTicker משתמש
+        currentIndex = 0;
+
+        // 4. איפוס ממשק המשתמש
         layoutProgress.setVisibility(View.VISIBLE);
-        progressBarHorizontal.setMax(totalStocks);
-        progressBarHorizontal.setProgress(0);
+//        progressBarHorizontal.setMax(totalStocks);
+//        progressBarHorizontal.setProgress(0);
         tvProgressText.setText("מכין סריקה...");
 
-        currentScanIndex = 0;
+        bargainStocksList.clear();
+        if (adapter != null) adapter.notifyDataSetChanged();
 
-        // התחלת התהליך הסדרתי
+        // 5. התחלת התהליך
         processNextTicker();
     }
+
     // 3. פונקציית העזר שחייבת להיות כאן כדי לעדכן את התצוגה ולסגור אותה בסוף
     private void updateProgressUI(int current, int total) {
-        progressBarHorizontal.setProgress(current);
+//        progressBarHorizontal.setProgress(current);
         tvProgressText.setText("סורק מניות: " + current + " / " + total);
 
         // כשהגענו למניה האחרונה - מעלימים את הבר
@@ -137,25 +152,73 @@ public class BargainsFragment extends Fragment {
     }
 
     private void fetchDataFromServer(String ticker) {
+        db.collection("stocks").document(ticker).get().addOnSuccessListener(documentSnapshot -> {
+            if (documentSnapshot.exists()) {
+                Stock stock = documentSnapshot.toObject(Stock.class);
+
+                // אם יש לנו את נתוני הבסיס (EPS ומחיר), אנחנו לא צריכים לעשות כלום!
+                // ה-SnapshotListener ב-fetchBargainStocks יתפוס אותם אוטומטית, יחשב ויציג.
+                if (stock != null && stock.getEps() != 0 && stock.getCurrentPrice() > 0) {
+                    Log.d("BARGAIN_SCAN", "נתונים קיימים עבור " + ticker + ", מדלג על API");
+                    return;
+                }
+            }
+
+            // חסרים נתונים - פונים ליאהו
+            fetchFromYahooAsFallback(ticker);
+        });
+    }
+
+    private void fetchFromYahooAsFallback(String ticker) {
         StockApiService apiService = RetrofitClient.getApiService();
-        String url = "https://query2.finance.yahoo.com/v10/finance/quoteSummary/" + ticker + "?modules=defaultKeyStatistics,financialData";
+        String url = "https://query2.finance.yahoo.com/v10/finance/quoteSummary/" + ticker +
+                "?modules=defaultKeyStatistics,financialData,earningsTrend";
 
         apiService.getYahooSummary(url).enqueue(new Callback<YahooSummaryResponse>() {
             @Override
             public void onResponse(Call<YahooSummaryResponse> call, Response<YahooSummaryResponse> response) {
+                if (!isAdded()) return;
                 if (response.isSuccessful() && response.body() != null) {
                     try {
-                        // הלוגיקה הקיימת שלך לחישוב שווי פנימי ושמירה
-                        processYahooResponse(ticker, response.body());
+                        YahooSummaryResponse.Result result = response.body().getQuoteSummary().getResult().get(0);
+
+                        Stock stock = new Stock();
+                        stock.setTicker(ticker);
+                        stock.setCurrentPrice(result.getFinancialData().getCurrentPrice().getRaw());
+                        stock.setLastUpdated(System.currentTimeMillis());
+
+                        if (result.getDefaultKeyStatistics() != null && result.getDefaultKeyStatistics().getTrailingEps() != null) {
+                            stock.setEps(result.getDefaultKeyStatistics().getTrailingEps().getRaw());
+                        }
+
+                        double growthRate = 5.0;
+                        if (result.getEarningsTrend() != null && !result.getEarningsTrend().getTrend().isEmpty()) {
+                            YahooSummaryResponse.Trend trend = result.getEarningsTrend().getTrend().get(0);
+                            if (trend.getGrowth() != null) {
+                                growthRate = trend.getGrowth().getRaw() * 100;
+                            }
+                        }
+                        stock.setGrowthRate(Math.max(0, Math.min(growthRate, 20.0)));
+
+                        if (result.getFinancialData() != null && result.getFinancialData().getFreeCashflow() != null) {
+                            stock.setFcf(result.getFinancialData().getFreeCashflow().getRaw());
+                        }
+                        if (result.getDefaultKeyStatistics() != null && result.getDefaultKeyStatistics().getSharesOutstanding() != null) {
+                            stock.setSharesOutstanding(result.getDefaultKeyStatistics().getSharesOutstanding().getRaw());
+                        }
+
+                        // שומרים נטו למחסן הכללי. ברגע שזה יישמר, המסך יתעדכן אוטומטית!
+                        db.collection("stocks").document(ticker).set(stock, SetOptions.merge());
+
                     } catch (Exception e) {
-                        Log.e("BARGAIN_HUNTER", "שגיאה בעיבוד נתונים עבור: " + ticker);
+                        Log.e("BARGAIN_FALLBACK", "Error parsing " + ticker, e);
                     }
                 }
             }
 
             @Override
             public void onFailure(Call<YahooSummaryResponse> call, Throwable t) {
-                Log.e("BARGAIN_HUNTER", "נכשל במשיכת נתונים עבור: " + ticker);
+                Log.e("BARGAIN_FALLBACK", "Network failed for " + ticker, t);
             }
         });
     }
@@ -175,16 +238,16 @@ public class BargainsFragment extends Fragment {
         View view = inflater.inflate(R.layout.fragment_bargains, container, false);
         rvBargains = view.findViewById(R.id.rvBargains);
         layoutProgress = view.findViewById(R.id.layoutProgress);
-        progressBarHorizontal = view.findViewById(R.id.progressBarHorizontal);
+//        progressBarHorizontal = view.findViewById(R.id.progressBarHorizontal);
         tvProgressText = view.findViewById(R.id.tvProgressText);
         layoutEmpty = view.findViewById(R.id.layoutEmpty);
         adapter = new StockAdapter(bargainStocksList, new StockAdapterListener() {
             @Override
             public void onDeleteClicked(Stock stock) {
-                db.collection("bargain_stocks").document(stock.getTicker()).delete()
-                        .addOnSuccessListener(aVoid -> Toast.makeText(getContext(), "המניה נמחקה מרשימת המציאות", Toast.LENGTH_SHORT).show());
+                // אנחנו לא מוחקים את המניה מהעולם, אלא רק "מאפסים" את הנתונים שלה
+                // או פשוט מודיעים למשתמש שאי אפשר למחוק מכאן (כי זה מסך סינון אוטומטי)
+                Toast.makeText(getContext(), "זהו מסך סינון אוטומטי. המניה תעלם כשהמחיר יעלה.", Toast.LENGTH_SHORT).show();
             }
-
             @Override
             public void onEditClicked(Stock stock) {
                 Toast.makeText(getContext(), "עריכה לא זמינה במסך זה", Toast.LENGTH_SHORT).show();
@@ -239,87 +302,74 @@ public class BargainsFragment extends Fragment {
         return view;
     }
 
-    private void saveBargainToFirebase(Stock stock) {
-        FirebaseFirestore db = FirebaseFirestore.getInstance();
-
-        // אנחנו משתמשים בטיקר כ-ID כדי שלא יהיו כפילויות של אותה מניה
-        db.collection("bargain_stocks").document(stock.getTicker())
-                .set(stock)
-                .addOnSuccessListener(aVoid -> Log.d("Firebase", "Stock saved: " + stock.getTicker()))
-                .addOnFailureListener(e -> Log.e("Firebase", "Error saving", e));
-    }
-
     private void fetchBargainStocks() {
+        if (bargainListener != null) bargainListener.remove();
 
-        // שימוש ב-addSnapshotListener במקום ב-get()
-        db.collection("stocks")
-                .whereGreaterThan("intrinsicValue", 0)
+        bargainListener = db.collection("stocks")
                 .addSnapshotListener((value, error) -> {
-                    if (isAdded()) {
-                        if (error != null) {
-                            Log.e("Firebase", "Listen failed.");
-                            return;
-                        }
+                    if (!isAdded() || value == null) return;
 
-                        if (value != null) {
-                            bargainStocksList.clear();
-                            for (QueryDocumentSnapshot document : value) {
+                    // הרצת החישובים הכבדים ב-Thread נפרד כדי לא לחסום את המסך
+                    new Thread(() -> {
+                        List<Stock> tempList = new ArrayList<>();
+                        for (QueryDocumentSnapshot document : value) {
+                            try {
                                 Stock stock = document.toObject(Stock.class);
-                                //   stock.setTicker(document.getId());
+                                double intrinsic = stock.getEps() * (currentBasePE + currentGrowthMult * stock.getGrowthRate());
+                                stock.setIntrinsicValue(intrinsic);
 
-                                // סינון מניות ערך
-                                if (stock.getCurrentPrice() < stock.getIntrinsicValue()) {
-                                    bargainStocksList.add(stock);
-                                    saveBargainToFirebase(stock);
+                                if (stock.getIntrinsicValue() > stock.getCurrentPrice() && stock.getIntrinsicValue() > 0) {
+                                    double mos = ((stock.getIntrinsicValue() - stock.getCurrentPrice()) / stock.getIntrinsicValue()) * 100;
+                                    stock.setMarginOfSafety(mos);
+                                    tempList.add(stock);
                                 }
+                            } catch (Exception e) {
+                                Log.e("Firebase", "Error parsing", e);
                             }
-
-                            Collections.sort(bargainStocksList, (s1, s2) ->
-                                    Double.compare(s2.getMarginOfSafety(), s1.getMarginOfSafety())
-                            );
-                            // עדכון ה-UI (המתודה שלך)
-                            updateUI();
                         }
-                    }
+
+                        Collections.sort(tempList, (s1, s2) -> Double.compare(s2.getMarginOfSafety(), s1.getMarginOfSafety()));
+
+                        // רק את עדכון ה-UI נשלח חזרה ל-Main Thread
+                        if (isAdded()) {
+                            requireActivity().runOnUiThread(() -> {
+                                bargainStocksList.clear();
+                                bargainStocksList.addAll(tempList);
+                                updateUI();
+                            });
+                        }
+                    }).start();
                 });
     }
-    private void updateUI() {
-        if (adapter != null) {
-            adapter.notifyDataSetChanged();
-        }
 
-        if (bargainStocksList.isEmpty()) {
-            layoutEmpty.setVisibility(View.VISIBLE);
-            rvBargains.setVisibility(View.GONE);
-        } else {
-            layoutEmpty.setVisibility(View.GONE);
-            rvBargains.setVisibility(View.VISIBLE);
-        }
+    private void updateUI() {
+        if (getActivity() == null) return;
+
+        getActivity().runOnUiThread(() -> {
+            if (adapter != null) {
+                adapter.notifyDataSetChanged();
+            }
+
+            if (bargainStocksList.isEmpty()) {
+                layoutEmpty.setVisibility(View.VISIBLE);
+                rvBargains.setVisibility(View.GONE);
+            } else {
+                layoutEmpty.setVisibility(View.GONE);
+                rvBargains.setVisibility(View.VISIBLE);
+            }
+        });
     }
 
-    private void processYahooResponse(String ticker, YahooSummaryResponse responseBody) {
-        YahooSummaryResponse.Result result = responseBody.getQuoteSummary().getResult().get(0);
-
-        double currentPrice = result.getFinancialData().getCurrentPrice().getRaw();
-        double eps = result.getDefaultKeyStatistics().getTrailingEps().getRaw();
-
-        double growthRate = 5.0; // ניתן לשכלל בעתיד
-        double intrinsicValue = eps * (currentBasePE + currentGrowthMult * growthRate);
-        double marginOfSafetyPrice = intrinsicValue * 0.90;
-
-        if (currentPrice < marginOfSafetyPrice) {
-            double marginOfSafetyPct = ((intrinsicValue - currentPrice) / intrinsicValue) * 100;
-
-            Stock newBargain = new Stock();
-            newBargain.setTicker(ticker);
-            newBargain.setCurrentPrice(currentPrice);
-            newBargain.setIntrinsicValue(intrinsicValue);
-            newBargain.setMarginOfSafety(marginOfSafetyPct);
-            newBargain.setLastCalculated(System.currentTimeMillis()); // הוספת זמן עדכון
-
-            // שמירה ל-Firebase
-            db.collection("stocks").document(ticker).set(newBargain);
+    @Override
+    public void onDestroyView() {
+        super.onDestroyView();
+        // 1. עצירת המאזין ל-Firebase
+        if (bargainListener != null) {
+            bargainListener.remove();
+            bargainListener = null;
         }
+        // 2. עצירת הסורק אם הוא רץ
+        scanHandler.removeCallbacksAndMessages(null);
     }
 
     private void showFinetuneDialog() {

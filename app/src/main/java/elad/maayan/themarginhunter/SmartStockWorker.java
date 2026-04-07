@@ -53,47 +53,72 @@ public class SmartStockWorker extends Worker {
                     String url = "https://query2.finance.yahoo.com/v10/finance/quoteSummary/" + ticker + "?modules=defaultKeyStatistics,financialData";
                     Response<YahooSummaryResponse> response = apiService.getYahooSummary(url).execute();
 
-                    if (response.isSuccessful() && response.body() != null) {
+                    if (response.isSuccessful() && response.body() != null &&
+                            response.body().getQuoteSummary() != null &&
+                            !response.body().getQuoteSummary().getResult().isEmpty()) {
+
                         YahooSummaryResponse.Result result = response.body().getQuoteSummary().getResult().get(0);
 
-                        double currentPrice = result.getFinancialData().getCurrentPrice().getRaw();
-                        double intrinsicValue = stock.getIntrinsicValue(); // מתחילים עם הערך הקיים
+                        // --- בדיקת נתוני מחיר (FinancialData) ---
+                        if (result.getFinancialData() != null && result.getFinancialData().getCurrentPrice() != null) {
+                            stock.setCurrentPrice(result.getFinancialData().getCurrentPrice().getRaw());
 
-                        Map<String, Object> updates = new HashMap<>();
-                        if (stock.getCompanyName() == null || stock.getCompanyName().isEmpty()) {
-                            updates.put("companyName", ticker);
-                        }
-                        updates.put("currentPrice", currentPrice);
-                        updates.put("lastUpdated", System.currentTimeMillis());
-
-                        // 3. אם זה העדכון השבועי המלא - נחשב גם ערך פנימי מחדש
-                        if (isFullRefresh) {
-                            double eps = result.getDefaultKeyStatistics().getTrailingEps().getRaw();
-                            // שימוש בתחזית הצמיחה הספציפית של המניה (ואם חסר, ברירת מחדל של 5%)
-                            double expectedGrowth = stock.getExpectedGrowth() > 0 ? stock.getExpectedGrowth() : 5.0;
-
-                            intrinsicValue = eps * (8.5 + 2 * expectedGrowth);
-
-                            updates.put("eps", eps);
-                            updates.put("intrinsicValue", intrinsicValue);
+                            // עדכון FCF אם קיים
+                            if (result.getFinancialData().getFreeCashflow() != null) {
+                                stock.setFcf(result.getFinancialData().getFreeCashflow().getRaw());
+                            }
                         }
 
-                        // 4. חישוב מרווח ביטחון (MOS) עדכני מול המחיר החדש
-                        double mos = 0;
-                        if (intrinsicValue > 0) {
-                            mos = ((intrinsicValue - currentPrice) / intrinsicValue) * 100;
-                            updates.put("marginOfSafety", mos);
+                        // --- בדיקת נתונים סטטיסטיים (DefaultKeyStatistics) ---
+                        if (result.getDefaultKeyStatistics() != null) {
+                            // עדכון EPS
+                            if (result.getDefaultKeyStatistics().getTrailingEps() != null) {
+                                stock.setEps(result.getDefaultKeyStatistics().getTrailingEps().getRaw());
+                            }
+                            // עדכון כמות מניות
+                            if (result.getDefaultKeyStatistics().getSharesOutstanding() != null) {
+                                stock.setSharesOutstanding(result.getDefaultKeyStatistics().getSharesOutstanding().getRaw());
+                            }
                         }
 
-                        // 5. שמירה ב-Firebase (באופן סינכרוני)
-                        Tasks.await(db.collection("stocks").document(ticker).update(updates));
+                        // --- בדיקת צמיחה (Growth) ---
+                        double growthRate = 5.0; // ערך ברירת מחדל
+                        if (result.getEarningsTrend() != null &&
+                                result.getEarningsTrend().getTrend() != null &&
+                                !result.getEarningsTrend().getTrend().isEmpty()) {
 
-                        // 6. בדיקת מציאות - אם המניה במבצע, נקפיץ התראה!
-                        if (mos >= 30) {
-                            sendNotification(ticker, mos);
+                            YahooSummaryResponse.Trend trend = result.getEarningsTrend().getTrend().get(0);
+                            if (trend.getGrowth() != null) {
+                                growthRate = trend.getGrowth().getRaw() * 100;
+                            }
                         }
+                        stock.setGrowthRate(Math.max(0, Math.min(growthRate, 20.0)));
+
+                        stock.setLastUpdated(System.currentTimeMillis());
+
+                        // --- חישובי שווי פנימי ו-Margin of Safety ---
+                        // רק אם יש לנו נתונים בסיסיים (מחיר ו-EPS)
+                        if (stock.getCurrentPrice() > 0 && stock.getEps() != 0) {
+
+                            if (isFullRefresh) {
+                                // נוסחת גראהם: EPS * (8.5 + 2 * g)
+                                double intrinsic = stock.getEps() * (8.5 + 2 * stock.getGrowthRate());
+                                stock.setIntrinsicValue(intrinsic);
+                            }
+
+                            if (stock.getIntrinsicValue() > 0) {
+                                double mos = ((stock.getIntrinsicValue() - stock.getCurrentPrice()) / stock.getIntrinsicValue()) * 100;
+                                stock.setMarginOfSafety(mos);
+
+                                if (mos >= 30) {
+                                    sendNotification(ticker, mos);
+                                }
+                            }
+                        }
+
+                        // 7. שמירה ב-Firebase
+                        Tasks.await(db.collection("stocks").document(ticker).set(stock, com.google.firebase.firestore.SetOptions.merge()));
                     }
-
                     // נשימה קלה בין קריאות כדי לא להיחסם על ידי Yahoo
                     Thread.sleep(1000);
 
