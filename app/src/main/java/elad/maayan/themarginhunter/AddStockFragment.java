@@ -207,20 +207,38 @@ public class AddStockFragment extends BottomSheetDialogFragment {
     private void fetchStockData(String ticker) {
         StockApiService api = RetrofitClient.getApiService();
 
-        // 1. שימוש ביאהו למשיכת מחיר ושם חברה (קריאה אחת יציבה)
+        // 1. משיכת מחיר ושם חברה מיאהו (עם חליפת מגן)
         String yahooUrl = "https://query1.finance.yahoo.com/v7/finance/quote?symbols=" + ticker;
         api.getYahooBulkQuotes(yahooUrl).enqueue(new Callback<YahooBulkQuoteResponse>() {
             @Override
             public void onResponse(Call<YahooBulkQuoteResponse> call, Response<YahooBulkQuoteResponse> response) {
-                if (response.isSuccessful() && response.body() != null && response.body().getQuoteResponse().getResult() != null) {
+                // הבדיקה הקריטית שמונעת את הקריסה - מוודאים שיש לפחות תוצאה אחת ברשימה!
+                if (response.isSuccessful() && response.body() != null
+                        && response.body().getQuoteResponse() != null
+                        && response.body().getQuoteResponse().getResult() != null
+                        && !response.body().getQuoteResponse().getResult().isEmpty()) {
+
                     YahooBulkQuoteResponse.Quote quote = response.body().getQuoteResponse().getResult().get(0);
 
                     if (getActivity() != null) {
                         getActivity().runOnUiThread(() -> {
-                            etCompanyName.setText(quote.getCompanyName());
-                            etPrice.setText(String.valueOf(quote.getRegularMarketPrice()));
+                            // הגנה מפני חברה ללא שם
+                            String companyName = quote.getCompanyName() != null ? quote.getCompanyName() : ticker;
+                            etCompanyName.setText(companyName);
+
+                            // קסם המניות הישראליות - המרה מאגורות לשקלים!
+                            double price = quote.getRegularMarketPrice();
+                            if (ticker.toUpperCase().endsWith(".TA")) {
+                                price = price / 100.0;
+                            }
+                            etPrice.setText(String.valueOf(price));
+
                             updateIntrinsicValueRealTime();
                         });
+                    }
+                } else {
+                    if(getActivity() != null) {
+                        getActivity().runOnUiThread(() -> Toast.makeText(getContext(), "לא נמצאו נתוני מחיר ביאהו עבור " + ticker, Toast.LENGTH_SHORT).show());
                     }
                 }
             }
@@ -230,28 +248,31 @@ public class AddStockFragment extends BottomSheetDialogFragment {
             }
         });
 
-        // 2. קריאת הנתונים הפיננסיים מ-Finnhub (קריאה בודדת בלבד - לא תיחסם)
-// 2. קריאת הנתונים הפיננסיים מ-Finnhub
+        // 2. קריאת הנתונים הפיננסיים מ-Finnhub (עטוף בהגנה למקרה של חוסר נתונים)
         api.getStockMetrics(ticker, "all", API_KEY).enqueue(new Callback<FinnhubMetricResponse>() {
             @Override
             public void onResponse(Call<FinnhubMetricResponse> call, Response<FinnhubMetricResponse> response) {
                 if (response.isSuccessful() && response.body() != null && response.body().getMetric() != null) {
-                    double eps = response.body().getMetric().getEps();
-                    double growth = response.body().getMetric().getGrowth();
-                    currentDividendYield = response.body().getMetric().getDividendYield();
+                    try {
+                        double eps = response.body().getMetric().getEps();
+                        double growth = response.body().getMetric().getGrowth();
+                        currentDividendYield = response.body().getMetric().getDividendYield();
 
-                    if(getActivity() != null) {
-                        getActivity().runOnUiThread(() -> {
-                            etEPS.setText(String.valueOf(eps));
-                            etGrowth.setText(String.valueOf(growth));
-                            updateIntrinsicValueRealTime();
-                        });
+                        if(getActivity() != null) {
+                            getActivity().runOnUiThread(() -> {
+                                etEPS.setText(String.valueOf(eps));
+                                etGrowth.setText(String.valueOf(growth));
+                                updateIntrinsicValueRealTime();
+                            });
+                        }
+                    } catch (Exception e) {
+                        Log.e("FINNHUB_ERROR", "חלק מהנתונים הפיננסיים חסרים", e);
                     }
                 } else {
-                    // תפיסת השגיאה השקטה והצגתה למשתמש
+                    // Finnhub לרוב לא תומך במניות זרות (כמו תל אביב), אז נציג הודעה עדינה
                     if(getActivity() != null) {
                         getActivity().runOnUiThread(() -> {
-                            Toast.makeText(getContext(), "שגיאת Finnhub: קוד " + response.code(), Toast.LENGTH_LONG).show();
+                            Toast.makeText(getContext(), "Finnhub: חסרים נתוני EPS. נא להזין ידנית.", Toast.LENGTH_LONG).show();
                         });
                     }
                 }
@@ -259,14 +280,14 @@ public class AddStockFragment extends BottomSheetDialogFragment {
 
             @Override
             public void onFailure(Call<FinnhubMetricResponse> call, Throwable t) {
-                // תפיסת שגיאות רשת ברמת המכשיר
                 if(getActivity() != null) {
                     getActivity().runOnUiThread(() -> {
-                            Toast.makeText(getContext(), "שגיאת רשת Finnhub: " + t.getMessage(), Toast.LENGTH_LONG).show();
+                        Toast.makeText(getContext(), "שגיאת רשת Finnhub", Toast.LENGTH_SHORT).show();
                     });
                 }
             }
         });
+
         currentTicker = ticker;
         fetchYahooChartDynamic(ticker, "1mo", "1d", "dd/MM");
     }
